@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Hero Scanner PRO</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,600;0,700;1,600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+  :root { --cream: #FDFAF5; --sand: #F2EBE0; --latte: #E8D9C5; --border: #D9C9B4; --brown: #B5895A; --brown-dk: #8B6340; --ink: #2A1F14; --ink-md: #6B5744; --ink-lt: #A8937D; --green: #3D8C5F; --green-bg: rgba(61,140,95,.1); --red: #C0392B; --red-bg: rgba(192,57,43,.08); --amber: #C07A1A; --amber-bg: rgba(192,122,26,.1); }
+  html, body { background: var(--cream); color: var(--ink); font-family: 'Plus Jakarta Sans', sans-serif; overflow-x: hidden; min-height: 100vh; }
+  #notification { position: fixed; top: -90px; left: 50%; transform: translateX(-50%); width: 92%; max-width: 400px; background: var(--cream); border: 1px solid var(--border); border-left: 4px solid var(--brown); padding: 14px 18px; border-radius: 14px; box-shadow: 0 8px 32px rgba(42,31,20,.12); transition: top .45s cubic-bezier(.68,-.55,.27,1.55); z-index: 9999; display: flex; align-items: center; gap: 12px; font-weight: 600; font-size: 14px; color: var(--ink); }
+  .screen { display: none; padding: 20px 18px; animation: slideUp .4s cubic-bezier(.16,1,.3,1) both; }
+  .active-screen { display: block; }
+  @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+  .card { background: #fff; border: 1px solid var(--latte); border-radius: 20px; padding: 22px; margin-bottom: 16px; box-shadow: 0 2px 12px rgba(42,31,20,.05); }
+  .inp { width: 100%; padding: 14px 18px; border: 1.5px solid var(--latte); border-radius: 14px; background: var(--sand); color: var(--ink); font-family: 'Plus Jakarta Sans', sans-serif; font-size: 15px; outline: none; margin-bottom: 12px; }
+  .inp:focus { border-color: var(--brown); background: #fff; }
+  .btn { width: 100%; padding: 15px; border: none; border-radius: 14px; font-family: 'Plus Jakarta Sans', sans-serif; font-weight: 700; font-size: 15px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; }
+  .btn-primary { background: var(--ink); color: var(--cream); }
+  .btn-secondary { background: var(--sand); color: var(--ink-md); border: 1.5px solid var(--latte); }
+  .btn-brown { background: var(--brown); color: #fff; }
+  .header { display: flex; align-items: center; justify-content: space-between; padding: 18px 18px 0; margin-bottom: 20px; }
+  .header-title { font-family: 'Playfair Display', serif; font-size: 1.6rem; font-weight: 700; color: var(--ink); }
+  .header-title em { font-style: italic; color: var(--brown); }
+  .icon-btn { width: 38px; height: 38px; border-radius: 10px; background: var(--sand); border: 1px solid var(--latte); display: flex; align-items: center; justify-content: center; cursor: pointer; }
+  #adminBtn { display: none; background: rgba(192,122,26,.1); color: var(--amber); border: 1px solid rgba(192,122,26,.25); padding: 9px 16px; border-radius: 10px; font-size: 12px; font-weight: 700; cursor: pointer; }
+  .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
+  .stat-card { background: #fff; border: 1px solid var(--latte); border-radius: 18px; padding: 20px 16px; text-align: center; }
+  .stat-card h3 { font-size: 10px; color: var(--ink-lt); text-transform: uppercase; font-weight: 600; margin-bottom: 8px; }
+  .stat-card p { font-family: 'Playfair Display', serif; font-size: 2rem; font-weight: 700; color: var(--ink); }
+  .acc-item { background: #fff; border: 1.5px solid var(--latte); border-radius: 16px; padding: 18px; margin-bottom: 12px; border-left: 4px solid var(--border); }
+  .acc-item.active-acc { border-left-color: var(--green); }
+  .acc-item.error-acc { border-left-color: var(--red); }
+  .acc-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .acc-email { font-size: 14px; font-weight: 600; color: var(--ink); word-break: break-all; }
+  .badge { font-size: 11px; font-weight: 700; padding: 5px 10px; border-radius: 8px; text-transform: uppercase; }
+  .badge-green { background: var(--green-bg); color: var(--green); }
+  .badge-red { background: var(--red-bg); color: var(--red); }
+  .acc-bottom { display: flex; justify-content: space-between; align-items: center; padding-top: 12px; border-top: 1px solid var(--sand); }
+  .action-group { display: flex; gap: 8px; }
+  .act-btn { background: var(--sand); border: 1px solid var(--latte); color: var(--ink-md); padding: 8px 12px; border-radius: 10px; font-size: 13px; cursor: pointer; }
+  .act-btn.del { color: var(--red); border-color: rgba(192,57,43,.2); background: var(--red-bg); }
+  .act-btn.reload { color: var(--amber); border-color: rgba(192,122,26,.2); background: var(--amber-bg); }
+  .scan-fixed { position: fixed; bottom: 15px; left: 5%; width: 90%; height: 64px; background: var(--ink); border: none; border-radius: 20px; color: var(--cream); font-weight: 800; font-size: 17px; display: flex; align-items: center; justify-content: center; gap: 12px; cursor: pointer; z-index: 100; box-shadow: 0 8px 28px rgba(42,31,20,.28); }
+  .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(42,31,20,.4); backdrop-filter: blur(8px); z-index: 5000; align-items: center; justify-content: center; }
+  .modal-box { background: var(--cream); border: 1px solid var(--latte); border-radius: 24px; padding: 28px; width: 88%; max-width: 420px; }
+  .modal-title { font-family: 'Playfair Display', serif; font-size: 1.3rem; font-weight: 700; color: var(--ink); margin-bottom: 6px; }
+  .admin-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
+  .acard { background: #fff; border: 1px solid var(--latte); border-radius: 16px; padding: 18px 14px; text-align: center; }
+  .acard h3 { font-size: 10px; color: var(--ink-lt); text-transform: uppercase; font-weight: 600; margin-bottom: 6px; }
+  .acard p { font-family: 'Playfair Display', serif; font-size: 1.8rem; font-weight: 700; color: var(--ink); }
+  .tab-row { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 20px; }
+  .tab-btn { flex-shrink: 0; background: var(--sand); color: var(--ink-md); border: 1px solid var(--latte); border-radius: 12px; padding: 10px 18px; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+  .tab-btn.active-tab { background: var(--ink); color: var(--cream); border-color: var(--ink); }
+  .admin-section { display: none; }
+  .admin-section.active { display: block; }
+  .tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .tbl th { background: var(--sand); color: var(--ink-lt); font-size: 10px; text-transform: uppercase; font-weight: 600; padding: 12px 14px; text-align: left; }
+  .tbl td { padding: 14px; border-bottom: 1px solid var(--sand); color: var(--ink); word-break: break-all; }
+  .tbl-wrap { background: #fff; border: 1px solid var(--latte); border-radius: 16px; overflow-x: auto; margin-bottom: 20px; }
+  .login-wrap { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 32px 24px; }
+  .login-logo { width: 68px; height: 68px; background: var(--brown); border-radius: 20px; margin: 0 auto 24px; display: flex; align-items: center; justify-content: center; font-size: 2rem; box-shadow: 0 8px 24px rgba(181,137,90,.3); }
+  .login-title { font-family: 'Playfair Display', serif; font-size: 2rem; font-weight: 700; color: var(--ink); text-align: center; margin-bottom: 8px; }
+  .login-card { width: 100%; max-width: 360px; background: #fff; border: 1px solid var(--latte); border-radius: 24px; padding: 28px; }
+  .info-strip { background: rgba(181,137,90,.08); border: 1px solid rgba(181,137,90,.2); border-radius: 12px; padding: 12px 16px; font-size: 12px; color: var(--ink-md); line-height: 1.6; margin-bottom: 16px; }
+  .star-rating { display: flex; gap: 5px; justify-content: center; margin-bottom: 15px; font-size: 2rem; cursor: pointer; color: var(--latte); }
+  .star-rating span.active { color: var(--amber); }
+  .shadow-btn { background: var(--sand); border: 1px solid var(--latte); color: var(--ink-lt); padding: 5px 9px; border-radius: 8px; font-size: 13px; cursor: pointer; transition: all .2s; }
+  .shadow-btn.active-shadow { background: rgba(192,57,43,.08); color: var(--red); border-color: rgba(192,57,43,.25); }
+  .shadow-badge { display: inline-block; font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 6px; background: rgba(192,57,43,.08); color: var(--red); border: 1px solid rgba(192,57,43,.2); margin-left: 4px; vertical-align: middle; }
+</style>
+</head>
+<body>
+
+<div id="notification"><span id="notifyIcon"></span><span id="notifyText" style="flex:1"></span></div>
+
+<div id="editModal" class="modal-overlay" style="z-index:4000">
+  <div class="modal-box">
+    <div class="modal-title">Profilni Tahrirlash</div>
+    <div style="font-size:12px;color:var(--ink-lt);margin-bottom:15px;">Faqat @newuu.uz domeni qabul qilinadi. Parolingiz shifrlanadi.</div>
+    <input type="hidden" id="editId">
+    <input type="text" id="editEmail" class="inp" placeholder="Yangi Email (@newuu.uz)">
+    <input type="password" id="editPass" class="inp" placeholder="Yangi Parol">
+    <div style="display:flex; gap:10px; margin-top:4px;">
+      <button class="btn btn-secondary" onclick="document.getElementById('editModal').style.display='none'">Bekor</button>
+      <button class="btn btn-primary" onclick="saveEdit()">Saqlash</button>
+    </div>
+  </div>
+</div>
+
+<div id="resultModal" class="modal-overlay">
+  <div class="modal-box">
+    <div class="modal-title">Skaner Natijasi</div>
+    <div id="resultList" style="overflow-y:auto; flex-grow:1; margin-bottom:16px;"></div>
+    <button class="btn btn-secondary" onclick="document.getElementById('resultModal').style.display='none'; loadData();">Yopish</button>
+  </div>
+</div>
+
+<div id="loginScreen" class="screen">
+  <div class="login-wrap">
+    <div class="login-logo">🔮</div>
+    <div class="login-title">Hero Scanner <em>PRO</em></div>
+    <div style="color:var(--ink-lt); font-size:14px; text-align:center; margin-bottom:32px;">Botdan olingan kalitni kiriting</div>
+    <div class="login-card">
+      <input type="text" id="loginInp" class="inp" placeholder="Login (hero_...)">
+      <input type="password" id="passInp" class="inp" placeholder="Parol">
+      <button class="btn btn-primary" onclick="doLogin()">Tizimga Kirish →</button>
+    </div>
+  </div>
+</div>
+
+<div id="dashboardScreen" class="screen">
+  <div class="header">
+    <div class="header-title">Boshqaruv <em>paneli</em></div>
+    <div style="display:flex; gap:8px; align-items:center;">
+      <button onclick="switchTab('shareScreen')" class="icon-btn" title="Ulashish">🔗</button>
+      <button onclick="switchTab('feedbackScreen')" class="icon-btn" title="Fikr qoldirish">💬</button>
+      <button id="adminBtn" onclick="switchTab('adminScreen')">⚡ Admin</button>
+      <div class="icon-btn" onclick="doLogout()" title="Chiqish">🚪</div>
+    </div>
+  </div>
+
+  <div class="stats-grid">
+    <div class="stat-card"><h3>Jami Akkaunt</h3><p id="statTotal">—</p></div>
+    <div class="stat-card"><h3>So'nggi Natija</h3><p id="statLast">—</p></div>
+  </div>
+
+  <div class="card">
+    <div style="font-family:'Playfair Display',serif; font-weight:700; font-size:1.1rem; color:var(--ink);">Yangi profil qo'shish</div>
+    <div style="font-size:12px; color:var(--ink-lt); margin-bottom:16px;">Faqat @newuu.uz domeni. Parolingiz shifrlab saqlanadi.</div>
+    <input type="text" id="newEmail" class="inp" placeholder="Email (@newuu.uz)">
+    <input type="password" id="newPass" class="inp" placeholder="Hero Paroli">
+    <button class="btn btn-secondary" onclick="addAccount()">+ Qo'shish va Tekshirish</button>
+  </div>
+
+  <div style="font-size:11px; color:var(--ink-lt); text-transform:uppercase; font-weight:600; margin-bottom:12px;">Faol Profillar</div>
+  <div id="accountList"><div style="text-align:center; padding:32px; background:#fff; border-radius:16px;">Yuklanmoqda...</div></div>
+  
+  <div style="height: 100px;"></div>
+  <button class="scan-fixed" onclick="startScan()">📷 Skanerlashni Boshlash</button>
+</div>
+
+<div id="feedbackScreen" class="screen">
+  <div class="header">
+    <div class="header-title">Fikr <em>Qoldirish</em></div>
+    <button class="tab-btn" onclick="switchTab('dashboardScreen')">← Orqaga</button>
+  </div>
+  <div class="info-strip">Ilovani yaxshilashimiz uchun o'z fikringiz, topilgan xatoliklar yoki takliflaringizni yozib qoldiring.</div>
+  <div class="card">
+    <select id="fbType" class="inp">
+      <option value="General">Umumiy Fikr</option>
+      <option value="Bug Report">Xatolik (Bug) haqida</option>
+      <option value="Improvement">Yaxshilash Taklifi</option>
+    </select>
+    <div style="text-align:center; font-size:13px; color:var(--ink-lt); margin-bottom:5px;">Baholang</div>
+    <div class="star-rating" id="stars">
+      <span onclick="setRating(1)">★</span><span onclick="setRating(2)">★</span>
+      <span onclick="setRating(3)">★</span><span onclick="setRating(4)">★</span><span onclick="setRating(5)">★</span>
+    </div>
+    <textarea id="fbMessage" class="inp" rows="4" placeholder="Xabaringizni bu yerga yozing..."></textarea>
+    <button class="btn btn-primary" onclick="sendFeedback()">📤 Yuborish</button>
+  </div>
+</div>
+
+<div id="shareScreen" class="screen">
+  <div class="header">
+    <div class="header-title">Ulashish <em>markazi</em></div>
+    <button class="tab-btn" onclick="switchTab('dashboardScreen')">← Orqaga</button>
+  </div>
+  <div class="info-strip">🔒 <b>Xavfsiz:</b> Do'stingiz skaner qilganda sizga ham davomat uriladi, lekin u sizning pochta va parolingizni <b>hech qachon ko'ra olmaydi</b>.</div>
+  
+  <div class="card">
+    <div style="font-weight:700; font-size:1.1rem; margin-bottom:10px;">📤 Kod Yaratish</div>
+    <div id="shareCodeBox" style="display:none; margin-bottom:16px;">
+      <div style="background:var(--sand); border:1.5px dashed var(--brown); border-radius:14px; padding:18px; text-align:center;">
+        <div id="shareCodeVal" style="font-family:monospace; font-size:2rem; font-weight:700; letter-spacing:3px;"></div>
+        <div id="shareCodeExpiry" style="font-size:11px; color:var(--ink-lt); margin-top:6px;"></div>
+      </div>
+      <button class="btn btn-secondary" onclick="copyShareCode()" style="margin-top:10px;">📋 Nusxalash</button>
+    </div>
+    <button class="btn btn-primary" id="generateShareBtn" onclick="generateShareCode()">✨ Yangi Kod Yaratish</button>
+  </div>
+
+  <div class="card">
+    <div style="font-weight:700; font-size:1.1rem; margin-bottom:10px;">📥 Kodni Qo'llash</div>
+    <input type="text" id="importCodeInp" class="inp" placeholder="Masalan: A3X7KQ" style="text-align:center; font-family:monospace; font-size:1.1rem; letter-spacing:2px;">
+    <button class="btn btn-brown" onclick="importShareCode()">🔗 Ulashishni Qabul Qilish</button>
+  </div>
+  
+  <div style="font-size:11px; font-weight:600; text-transform:uppercase; margin:20px 0 10px;">Mavjud Ulanishlar</div>
+  <div id="shareConnectionsList"></div>
+</div>
+
+<div id="adminScreen" class="screen">
+  <div class="header">
+    <div class="header-title">Admin <em>Markazi</em></div>
+    <button class="tab-btn" onclick="switchTab('dashboardScreen')">← Orqaga</button>
+  </div>
+  <div class="admin-grid">
+    <div class="acard"><h3>User</h3><p id="admUsers">0</p></div>
+    <div class="acard"><h3>Akk</h3><p id="admHeroes">0</p></div>
+    <div class="acard"><h3>Skaner</h3><p id="admScans">0</p></div>
+    <div class="acard"><h3>Aktiv</h3><p id="admActive">0</p></div>
+  </div>
+  
+  <button class="btn btn-secondary" onclick="exportAdminCSV()" style="margin-bottom:20px;">💾 Baza Zaxirasini Yuklash (CSV)</button>
+
+  <div class="tab-row">
+    <button class="tab-btn active-tab" onclick="showAdminSection('secUsers', this)">👥 Userlar</button>
+    <button class="tab-btn" onclick="showAdminSection('secPass',  this)">🔐 Parollar</button>
+    <button class="tab-btn" onclick="showAdminSection('secLogs',  this)">⏱ Tarix</button>
+    <button class="tab-btn" onclick="showAdminSection('secArch',  this)">📦 Arxiv</button>
+  </div>
+
+  <div id="secUsers" class="admin-section active"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>User</th><th>Akk</th><th>Obuna</th><th>Sharpa</th><th>Amal</th></tr></thead><tbody id="adminUsersList"></tbody></table></div></div>
+  <div id="secPass" class="admin-section"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Egasi</th><th>Email</th><th>Parol</th></tr></thead><tbody id="adminPassList"></tbody></table></div></div>
+  <div id="secLogs" class="admin-section"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Mualif</th><th>Natija</th><th>Vaqt</th></tr></thead><tbody id="adminLogsList"></tbody></table></div></div>
+  <div id="secArch" class="admin-section"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Egasi</th><th>Email</th><th>Parol</th><th>O'chirilgan</th></tr></thead><tbody id="adminArchList"></tbody></table></div></div>
+</div>
+
+<script>
+  const tg = window.Telegram.WebApp; tg.expand(); tg.ready();
+  let currentRating = 0;
+
+  function showNotify(msg, isOk) {
+    const n = document.getElementById('notification');
+    document.getElementById('notifyIcon').textContent = isOk ? '✅' : '⚠️';
+    document.getElementById('notifyText').textContent = msg;
+    n.style.borderLeftColor = isOk ? 'var(--brown)' : 'var(--red)';
+    n.style.top = '20px'; setTimeout(() => n.style.top = '-90px', 3500);
+  }
+
+  function getHeaders() {
+    return { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('h_token')}` };
+  }
+
+  // Escapes text for safe placement inside HTML (prevents stored XSS from user-entered emails/passwords)
+  function esc(str) {
+    return String(str ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+  // Escapes text for safe placement inside a single-quoted JS string literal (used before esc() for onclick args)
+  function escJs(str) {
+    return String(str ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n');
+  }
+
+  function switchTab(tabId) {
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active-screen'));
+    document.getElementById(tabId).classList.add('active-screen'); window.scrollTo(0, 0);
+    if (tabId === 'dashboardScreen') loadData();
+    if (tabId === 'adminScreen') loadAdminData();
+    if (tabId === 'shareScreen') loadShareConnections();
+  }
+
+  function showAdminSection(sectionId, btn) {
+    document.querySelectorAll('.admin-section').forEach(el => el.classList.remove('active'));
+    document.getElementById(sectionId).classList.add('active');
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active-tab'));
+    if (btn) btn.classList.add('active-tab');
+  }
+
+  function init() {
+    if (localStorage.getItem('h_token')) {
+      switchTab('dashboardScreen');
+      if (localStorage.getItem('h_role') === 'super_admin') document.getElementById('adminBtn').style.display = 'block';
+    } else switchTab('loginScreen');
+  }
+
+  async function doLogin() {
+    const l = document.getElementById('loginInp').value.trim(), p = document.getElementById('passInp').value.trim();
+    if (!l || !p) return showNotify("To'ldiring", false);
+    try {
+      const res = await (await fetch('/api/auth/login', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({login:l, password:p}) })).json();
+      if (res.status === 'success') {
+        localStorage.setItem('h_token', res.token); localStorage.setItem('h_role', res.role);
+        showNotify("Kirdingiz!", true); init();
+      } else showNotify(res.message, false);
+    } catch(e) { showNotify("Xato", false); }
+  }
+
+  function doLogout() { if(confirm("Chiqishni tasdiqlaysizmi?")) { localStorage.clear(); switchTab('loginScreen'); } }
+
+  function openEdit(id, email) { document.getElementById('editId').value=id; document.getElementById('editEmail').value=email; document.getElementById('editPass').value=''; document.getElementById('editModal').style.display='flex'; }
+  
+  async function saveEdit() {
+    const id=document.getElementById('editId').value, e=document.getElementById('editEmail').value.trim(), p=document.getElementById('editPass').value.trim();
+    if(!e.endsWith('@newuu.uz')) return showNotify("Faqat @newuu.uz", false);
+    showNotify("Tekshirilmoqda...", true);
+    const r = await (await fetch('/api/users/edit', { method:'POST', headers: getHeaders(), body: JSON.stringify({account_id:id, email:e, password:p}) })).json();
+    showNotify(r.message || "Xato", r.status==='success');
+    if (r.status==='success') { document.getElementById('editModal').style.display='none'; loadData(); }
+  }
+
+  async function reloadToken(id) {
+    showNotify("Yangilanmoqda...", true);
+    const res = await (await fetch('/api/users/reload', { method:'POST', headers: getHeaders(), body: JSON.stringify({account_id: id}) })).json();
+    showNotify(res.message, res.status==='success'); if(res.status==='success') loadData();
+  }
+
+  async function loadData() {
+    try {
+      const res = await fetch('/api/users', { headers: getHeaders() });
+      if (res.status === 401) { doLogout(); return; }
+      const data = await res.json();
+      if (data.status === 'success') {
+        document.getElementById('accountList').innerHTML = data.users.length ? data.users.map(u => {
+          const isAct = u.bearer_token && u.bearer_token!=='NO_TOKEN' && !u.bearer_token.startsWith('ERROR');
+          return `<div class="acc-item ${isAct?'active-acc':'error-acc'}">
+            <div class="acc-top"><span class="acc-email">${esc(u.email)}</span><span class="badge ${isAct?'badge-green':'badge-red'}">${isAct?'Aktiv':'Nofaol'}</span></div>
+            <div class="acc-bottom"><span style="font-size:12px;color:var(--ink-lt)">${isAct?'Parol shifrlangan':'Yangilash tugmasini bosing'}</span>
+              <div class="action-group">
+                ${!isAct ? `<button class="act-btn reload" onclick="reloadToken(${u.id})">🔄</button>` : ''}
+                <button class="act-btn" onclick="openEdit(${u.id},'${esc(escJs(u.email))}')">✏️</button>
+                <button class="act-btn del" onclick="delAcc(${u.id})">🗑</button>
+              </div></div></div>`;
+        }).join('') : `<div style="text-align:center;padding:32px;background:#fff;border-radius:16px;">Hali profillar yo'q</div>`;
+      }
+      const s = await (await fetch('/api/stats', { headers: getHeaders() })).json();
+      if(s.status==='success') { document.getElementById('statTotal').textContent=s.data.total_accounts; document.getElementById('statLast').textContent=`${s.data.last_success}/${s.data.last_total}`; }
+    } catch(e) {}
+  }
+
+  async function addAccount() {
+    const e = document.getElementById('newEmail').value.trim(), p = document.getElementById('newPass').value.trim();
+    if(!e || !p) return showNotify("To'ldiring", false);
+    showNotify("Kutilmoqda...", true);
+    const res = await (await fetch('/api/users/add', { method:'POST', headers: getHeaders(), body: JSON.stringify({email:e, password:p}) })).json();
+    showNotify(res.message, res.status==='success');
+    if (res.status==='success') { document.getElementById('newEmail').value=''; document.getElementById('newPass').value=''; loadData(); }
+  }
+
+  async function delAcc(id) {
+    if(confirm("Arxivga yuborilsinmi?")) { await fetch('/api/users/delete', { method:'POST', headers: getHeaders(), body: JSON.stringify({account_id: id}) }); loadData(); }
+  }
+
+  function startScan() {
+    tg.showScanQrPopup({ text: "Kodni skanerlang" }, async (url) => {
+      showNotify("Yuborilmoqda...", true); tg.closeScanQrPopup();
+      const res = await (await fetch('/api/scan', { method:'POST', headers: getHeaders(), body: JSON.stringify({url}) })).json();
+      if(res.status==='success') { showNotify(`${res.success} ta darsga kirdi`, true);
+        document.getElementById('resultList').innerHTML = res.report.map(i => `<div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--sand);"><span>${esc(i.email)}</span><span class="badge ${i.ok?'badge-green':'badge-red'}">${i.ok?'✅':'❌'}</span></div>`).join('');
+        document.getElementById('resultModal').style.display='flex'; loadData();
+      } else showNotify(res.message, false);
+      return true;
+    });
+  }
+
+  /* Share Functions */
+  async function generateShareCode() {
+    const res = await (await fetch('/api/share/generate', { method:'POST', headers: getHeaders() })).json();
+    if(res.status==='success') { document.getElementById('shareCodeVal').textContent=res.code; document.getElementById('shareCodeBox').style.display='block'; showNotify("Kod yaratildi", true); }
+  }
+  function copyShareCode() { navigator.clipboard.writeText(document.getElementById('shareCodeVal').textContent); showNotify("Nusxalandi", true); }
+  async function importShareCode() {
+    const code = document.getElementById('importCodeInp').value.trim().toUpperCase();
+    const res = await (await fetch('/api/share/import', { method:'POST', headers: getHeaders(), body: JSON.stringify({code}) })).json();
+    showNotify(res.message, res.status==='success'); if(res.status==='success'){ document.getElementById('importCodeInp').value=''; loadShareConnections(); }
+  }
+  async function loadShareConnections() {
+    const res = await (await fetch('/api/share/connections', { headers: getHeaders() })).json();
+    if(res.status==='success') document.getElementById('shareConnectionsList').innerHTML = res.connections.length ? res.connections.map(c => `<div class="acc-item"><span style="font-weight:600">👤 ${esc(c.login)}</span> <span class="badge badge-green">${c.type==='shared_to_me'?'→ Menga':'← Mendan'}</span></div>`).join('') : `<div style="text-align:center;padding:24px;background:#fff;border-radius:16px;">Hech kim yo'q</div>`;
+  }
+
+  /* Feedback Functions */
+  function setRating(num) {
+    currentRating = num; const stars = document.getElementById('stars').children;
+    for(let i=0; i<5; i++) stars[i].className = i < num ? 'active' : '';
+  }
+  async function sendFeedback() {
+    const type = document.getElementById('fbType').value, msg = document.getElementById('fbMessage').value.trim();
+    if(!msg || currentRating === 0) return showNotify("Baholang va xabar yozing", false);
+    const res = await (await fetch('/api/feedback', { method:'POST', headers: getHeaders(), body: JSON.stringify({type, rating:currentRating, message:msg}) })).json();
+    if(res.status === 'success') { showNotify("Xabaringiz yuborildi!", true); document.getElementById('fbMessage').value=''; setRating(0); switchTab('dashboardScreen'); }
+  }
+
+  /* Admin */
+  async function exportAdminCSV() {
+    try {
+      const res = await fetch('/api/admin/export', { headers: getHeaders() });
+      if (!res.ok) { showNotify("Eksport xatosi", false); return; }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'HeroScanner_Zaxira.csv';
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) { showNotify("Eksport xatosi", false); }
+  }
+  
+  let _adminShadows = [];
+
+  async function toggleShadow(userId) {
+    const wasShadowed = _adminShadows.includes(userId);
+    const btn = document.getElementById(`sh_${userId}`);
+    if (btn) { btn.disabled = true; btn.textContent = '...'; }
+    await fetch('/api/admin/set_shadow', { method: 'POST', headers: getHeaders(), body: JSON.stringify({ target_id: userId }) });
+    if (wasShadowed) { _adminShadows = _adminShadows.filter(id => id !== userId); }
+    else { _adminShadows.push(userId); }
+    if (btn) { btn.disabled = false; _renderShadowBtn(btn, userId); }
+  }
+
+  function _renderShadowBtn(btn, userId) {
+    const isShadowed = _adminShadows.includes(userId);
+    btn.textContent = isShadowed ? '👁️ Faol' : '👁 Yoq';
+    btn.className = `shadow-btn${isShadowed ? ' active-shadow' : ''}`;
+  }
+
+  async function loadAdminData() {
+    const res = await (await fetch('/api/admin/all_data', { headers: getHeaders() })).json();
+    if(res.status!=='success') return; const d=res.data;
+    _adminShadows = Array.isArray(d.my_shadows) ? d.my_shadows : [];
+    document.getElementById('admUsers').textContent=d.stats.total_users; document.getElementById('admHeroes').textContent=d.stats.total_heroes;
+    document.getElementById('admScans').textContent=d.stats.today_scans; document.getElementById('admActive').textContent = d.users.filter(u=>new Date(u.trial_ends_at)>new Date()).length;
+    
+    document.getElementById('adminUsersList').innerHTML = d.users.map(u => {
+      const isShadowed = _adminShadows.includes(u.id);
+      const shadowedBadge = isShadowed ? `<span class="shadow-badge">SHARPA</span>` : '';
+      return `<tr>
+        <td><b>${esc(u.login)}</b>${shadowedBadge}</td>
+        <td>${u.hero_count}</td>
+        <td>${new Date(u.trial_ends_at).toLocaleDateString()}</td>
+        <td><button id="sh_${u.id}" class="shadow-btn${isShadowed?' active-shadow':''}" onclick="toggleShadow(${u.id})">${isShadowed?'👁️ Faol':'👁 Yoq'}</button></td>
+        <td><button onclick="fetch('/api/admin/extend',{method:'POST',headers:getHeaders(),body:JSON.stringify({target_id:${u.id}})}).then(loadAdminData)">+30K</button></td>
+      </tr>`;
+    }).join('');
+    document.getElementById('adminPassList').innerHTML = d.accounts.map(a => `<tr><td>${esc(a.tg_login)}</td><td>${esc(a.email)}</td><td style="color:var(--green)">${esc(a.hero_password)}</td></tr>`).join('');
+    document.getElementById('adminLogsList').innerHTML = d.logs.map(l => `<tr><td>${esc(l.login)}</td><td>${l.success_count}/${l.total_count}</td><td>${new Date(l.scanned_at).toLocaleTimeString()}</td></tr>`).join('');
+    document.getElementById('adminArchList').innerHTML = d.archived.map(ar => `<tr><td>${esc(ar.tg_login)}</td><td>${esc(ar.email)}</td><td>${esc(ar.hero_password)}</td><td>${new Date(ar.deleted_at).toLocaleDateString()}</td></tr>`).join('');
+  }
+
+  init();
+</script>
+</body>
+</html>

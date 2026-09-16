@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HeroScan — Aqlli Akkaunt Boshqaruvi</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,700&family=Plus+Jakarta+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --cream:    #FDFAF5;
+    --sand:     #F2EBE0;
+    --latte:    #E8D9C5;
+    --brown:    #B5895A;
+    --brown-dk: #8B6340;
+    --ink:      #2A1F14;
+    --ink-md:   #6B5744;
+    --ink-lt:   #A8937D;
+    --white:    #FFFFFF;
+  }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    background: var(--cream);
+    color: var(--ink);
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    font-weight: 400;
+    line-height: 1.6;
+    overflow-x: hidden;
+  }
+
+  /* NAV */
+  nav {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 200;
+    padding: 18px 6vw;
+    display: flex; align-items: center; justify-content: space-between;
+    background: rgba(253,250,245,.88);
+    backdrop-filter: blur(20px);
+    border-bottom: 1px solid rgba(181,137,90,.15);
+    transition: background .3s;
+  }
+
+  .logo {
+    font-family: 'Playfair Display', serif;
+    font-weight: 700; font-size: 1.35rem;
+    color: var(--ink); text-decoration: none;
+    letter-spacing: -.02em;
+    display: flex; align-items: center; gap: 10px;
+  }
+
+  .logo-mark {
+    width: 32px; height: 32px; border-radius: 8px;
+    background: var(--brown);
+    display: flex; align-items: center; justify-content: center;
+    font-size: .85rem; color: #fff; font-weight: 700;
+    font-family: 'Playfair Display', serif;
+  }
+
+  .nav-links {
+    display: flex; align-items: center; gap: 32px;
+    list-style: none;
+  }
+  .nav-links a {
+    color: var(--ink-md); text-decoration: none;
+    font-size: .88rem; font-weight: 500;
+    transition: color .2s;
+  }
+  .nav-links a:hover { color: var(--ink); }
+
+  .nav-cta {
+    background: var(--ink) !important;
+    color: var(--cream) !important;
+    padding: 9px 22px; border-radius: 100px;
+    font-size: .875rem; font-weight: 600;
+    transition: background .2s, transform .2s !important;
+  }
+  .nav-cta:hover { background: var(--brown-dk) !important; transform: translateY(-1px); }
+
+  /* HERO */
+  #hero {
+    position: relative; min-height: 100vh;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    text-align: center;
+    padding: 140px 6vw 100px;
+    overflow: hidden;
+  }
+
+  .video-bg {
+    position: absolute; inset: 0; z-index: 0;
+    overflow: hidden;
+  }
+  .video-bg video {
+    width: 100%; height: 100%;
+    object-fit: cover;
+    filter: saturate(.55) brightness(1.1);
+  }
+  .video-bg::after {
+    content: '';
+    position: absolute; inset: 0;
+    background: linear-gradient(
+      170deg,
+      rgba(253,250,245,.88) 0%,
+      rgba(242,235,224,.78) 45%,
+      rgba(232,217,197,.85) 75%,
+      rgba(253,250,245,.94) 100%
+    );
+  }
+  /* Gradient fallback if video doesn't load */
+  .video-bg {
+    background: linear-gradient(135deg, #F5EEE3 0%, #EDE0CE 40%, #F8F3EC 100%);
+  }
+
+  .hero-content { position: relative; z-index: 1; }
+
+  .hero-badge {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: rgba(181,137,90,.11);
+    border: 1px solid rgba(181,137,90,.28);
+    padding: 7px 18px; border-radius: 100px;
+    font-size: .76rem; color: var(--brown-dk);
+    letter-spacing: .09em; text-transform: uppercase;
+    font-weight: 600; margin-bottom: 32px;
+    animation: fadeUp .6s ease both;
+  }
+
+  h1 {
+    font-family: 'Playfair Display', serif;
+    font-size: clamp(3rem, 7vw, 5.8rem);
+    font-weight: 700; line-height: 1.07;
+    letter-spacing: -.03em; max-width: 860px;
+    color: var(--ink);
+    animation: fadeUp .7s .1s ease both;
+  }
+  h1 em { color: var(--brown); font-style: italic; }
+
+  .hero-sub {
+    margin-top: 26px;
+    font-size: clamp(.95rem, 1.8vw, 1.1rem);
+    color: var(--ink-md); max-width: 500px;
+    margin-left: auto; margin-right: auto;
+    line-height: 1.78; font-weight: 400;
+    animation: fadeUp .7s .2s ease both;
+  }
+
+  .hero-actions {
+    margin-top: 44px;
+    display: flex; gap: 14px; flex-wrap: wrap;
+    justify-content: center;
+    animation: fadeUp .7s .3s ease both;
+  }
+
+  .btn-dark {
+    background: var(--ink); color: var(--cream);
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    font-weight: 600; font-size: .93rem;
+    padding: 14px 32px; border-radius: 100px;
+    text-decoration: none;
+    transition: all .25s ease;
+    display: inline-flex; align-items: center; gap: 8px;
+    box-shadow: 0 4px 20px rgba(42,31,20,.2);
+  }
+  .btn-dark:hover { background: var(--brown-dk); transform: translateY(-2px); box-shadow: 0 8px 28px rgba(139,99,64,.32); }
+
+  .btn-outline {
+    background: rgba(255,255,255,.6);
+    color: var(--ink-md);
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    font-weight: 500; font-size: .93rem;
+    padding: 13px 26px; border-radius: 100px;
+    border: 1.5px solid rgba(42,31,20,.18);
+    text-decoration: none;
+    transition: all .25s ease;
+    backdrop-filter: blur(8px);
+  }
+  .btn-outline:hover { border-color: var(--brown); color: var(--brown-dk); background: rgba(255,255,255,.8); }
+
+  /* Stat pills */
+  .stats-row {
+    margin-top: 64px;
+    display: flex; justify-content: center; flex-wrap: wrap;
+    animation: fadeUp .7s .45s ease both;
+    background: rgba(255,255,255,.52);
+    backdrop-filter: blur(14px);
+    border: 1px solid rgba(181,137,90,.18);
+    border-radius: 18px;
+    max-width: 500px; margin-left: auto; margin-right: auto;
+    overflow: hidden;
+    box-shadow: 0 2px 24px rgba(42,31,20,.06);
+  }
+
+  .stat-item {
+    flex: 1; padding: 20px 24px; text-align: center;
+    border-right: 1px solid rgba(181,137,90,.13);
+  }
+  .stat-item:last-child { border-right: none; }
+
+  .stat-n {
+    font-family: 'Playfair Display', serif;
+    font-size: 1.7rem; font-weight: 700; color: var(--ink);
+    line-height: 1;
+  }
+  .stat-l { font-size: .68rem; color: var(--ink-lt); margin-top: 4px; letter-spacing: .05em; text-transform: uppercase; font-weight: 500; }
+
+  /* SECTIONS */
+  section { padding: 108px 6vw; }
+
+  .tag {
+    display: inline-block;
+    font-size: .7rem; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--brown);
+    font-weight: 600; margin-bottom: 14px;
+    background: rgba(181,137,90,.1);
+    padding: 5px 14px; border-radius: 100px;
+  }
+
+  .sec-title {
+    font-family: 'Playfair Display', serif;
+    font-size: clamp(2.1rem, 4vw, 3.1rem);
+    font-weight: 700; letter-spacing: -.03em;
+    line-height: 1.12; color: var(--ink);
+  }
+  .sec-title em { font-style: italic; color: var(--brown); }
+
+  /* HOW */
+  #how { background: var(--sand); border-top: 1px solid var(--latte); border-bottom: 1px solid var(--latte); }
+
+  .how-top { display: flex; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; gap: 24px; }
+  .how-desc { max-width: 320px; color: var(--ink-md); font-size: .92rem; line-height: 1.72; }
+
+  .steps {
+    margin-top: 60px;
+    display: grid; grid-template-columns: repeat(3,1fr);
+    gap: 2px;
+  }
+
+  .step {
+    background: var(--cream); padding: 48px 36px 42px;
+    position: relative; overflow: hidden;
+    transition: background .25s;
+  }
+  .step:hover { background: var(--white); }
+
+  .step-num {
+    font-family: 'Playfair Display', serif;
+    font-size: 5.5rem; font-weight: 700;
+    color: rgba(181,137,90,.1);
+    position: absolute; top: 16px; right: 20px;
+    line-height: 1; pointer-events: none;
+    transition: color .25s;
+  }
+  .step:hover .step-num { color: rgba(181,137,90,.18); }
+
+  .step-icon {
+    font-size: 1.6rem; margin-bottom: 24px;
+    width: 54px; height: 54px;
+    background: rgba(181,137,90,.1);
+    border-radius: 14px;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  .step-title {
+    font-family: 'Playfair Display', serif;
+    font-size: 1.25rem; font-weight: 600;
+    color: var(--ink); margin-bottom: 12px;
+  }
+  .step-desc { color: var(--ink-md); font-size: .88rem; line-height: 1.72; }
+
+  /* PROOF */
+  #proof { background: var(--cream); }
+  .proof-head { text-align: center; margin-bottom: 60px; }
+
+  .reviews {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(286px, 1fr));
+    gap: 18px; max-width: 980px; margin: 0 auto;
+  }
+
+  .review-card {
+    background: var(--white);
+    border: 1px solid var(--latte);
+    border-radius: 20px; padding: 30px;
+    transition: border-color .25s, transform .25s, box-shadow .25s;
+  }
+  .review-card:hover {
+    border-color: var(--brown);
+    transform: translateY(-4px);
+    box-shadow: 0 12px 32px rgba(181,137,90,.11);
+  }
+
+  .stars { color: var(--brown); font-size: .88rem; letter-spacing: 2px; margin-bottom: 14px; }
+  .review-text { color: var(--ink-md); font-size: .9rem; line-height: 1.75; margin-bottom: 22px; }
+
+  .reviewer { display: flex; align-items: center; gap: 12px; }
+  .ava {
+    width: 40px; height: 40px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--latte), var(--brown));
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'Playfair Display', serif; font-weight: 700;
+    font-size: .88rem; color: #fff;
+  }
+  .rev-name { font-weight: 600; font-size: .88rem; color: var(--ink); }
+  .rev-role { font-size: .75rem; color: var(--ink-lt); }
+
+  .trust-strip {
+    margin-top: 60px; padding-top: 48px;
+    border-top: 1px solid var(--latte);
+    display: flex; align-items: center; justify-content: center;
+    gap: 40px; flex-wrap: wrap;
+  }
+  .trust-item { display: flex; align-items: center; gap: 9px; color: var(--ink-md); font-size: .83rem; font-weight: 500; }
+  .trust-item svg { color: var(--brown); flex-shrink: 0; }
+
+  /* FINAL CTA */
+  #cta {
+    background: var(--ink); text-align: center;
+    padding: 120px 6vw; position: relative; overflow: hidden;
+  }
+  #cta::before {
+    content: '';
+    position: absolute; width: 640px; height: 640px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(181,137,90,.1) 0%, transparent 70%);
+    top: 50%; left: 50%; transform: translate(-50%,-50%);
+    pointer-events: none;
+  }
+
+  #cta .tag { background: rgba(181,137,90,.18); color: #D4A97A; }
+  #cta .sec-title { color: var(--cream); max-width: 600px; margin: 0 auto 20px; }
+  #cta .sec-title em { color: #D4A97A; }
+
+  #cta .sub {
+    color: rgba(253,250,245,.55); font-size: .97rem;
+    max-width: 440px; margin: 0 auto 44px;
+    line-height: 1.72; position: relative;
+  }
+
+  .cta-actions { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; position: relative; }
+
+  .btn-warm {
+    background: var(--brown); color: #fff;
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    font-weight: 600; font-size: .93rem;
+    padding: 14px 32px; border-radius: 100px;
+    text-decoration: none;
+    transition: all .25s ease;
+    display: inline-flex; align-items: center; gap: 8px;
+    box-shadow: 0 4px 24px rgba(181,137,90,.38);
+  }
+  .btn-warm:hover { background: #C9956A; transform: translateY(-2px); box-shadow: 0 8px 32px rgba(181,137,90,.5); }
+
+  .btn-ghost-lt {
+    background: transparent; color: rgba(253,250,245,.65);
+    border: 1.5px solid rgba(253,250,245,.18);
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    font-weight: 500; font-size: .93rem;
+    padding: 13px 26px; border-radius: 100px;
+    text-decoration: none; transition: all .25s;
+  }
+  .btn-ghost-lt:hover { color: var(--cream); border-color: rgba(253,250,245,.45); }
+
+  .fine { margin-top: 20px; color: rgba(253,250,245,.3); font-size: .78rem; position: relative; }
+
+  /* FOOTER */
+  footer {
+    background: var(--ink);
+    border-top: 1px solid rgba(253,250,245,.07);
+    padding: 34px 6vw;
+    display: flex; align-items: center; justify-content: space-between;
+    flex-wrap: wrap; gap: 16px;
+  }
+  .foot-logo { font-family: 'Playfair Display', serif; font-weight: 700; font-size: 1.1rem; color: var(--cream); text-decoration: none; }
+  .foot-links { display: flex; gap: 24px; }
+  .foot-links a { color: rgba(253,250,245,.38); text-decoration: none; font-size: .8rem; transition: color .2s; }
+  .foot-links a:hover { color: var(--cream); }
+  .foot-copy { color: rgba(253,250,245,.22); font-size: .76rem; }
+
+  /* ANIMATIONS */
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(24px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .reveal { opacity: 0; transform: translateY(30px); transition: opacity .65s ease, transform .65s ease; }
+  .reveal.on { opacity: 1; transform: none; }
+
+  /* MOBILE */
+  @media (max-width: 768px) {
+    .steps { grid-template-columns: 1fr; gap: 1px; }
+    .step { padding: 34px 26px; }
+    .how-top { flex-direction: column; }
+    .nav-links li:not(:last-child) { display: none; }
+    footer { flex-direction: column; text-align: center; }
+    .foot-links { justify-content: center; }
+    .stats-row { max-width: 100%; }
+    .hero-actions { flex-direction: column; align-items: stretch; }
+    .btn-dark, .btn-outline { text-align: center; justify-content: center; }
+    .trust-strip { gap: 20px; }
+    #cta { padding: 80px 6vw; }
+  }
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <a href="#" class="logo">
+    <div class="logo-mark">H</div>
+    HeroScan
+  </a>
+  <ul class="nav-links">
+    <li><a href="#how">Qanday ishlaydi</a></li>
+    <li><a href="#proof">Fikrlar</a></li>
+    <li><a href="https://t.me/your_bot" class="nav-cta" target="_blank">Botni ochish</a></li>
+  </ul>
+</nav>
+
+<!-- HERO with video background -->
+<section id="hero">
+  <div class="video-bg">
+    <video autoplay muted loop playsinline preload="metadata">
+      <!-- Pexels free stock videos – warm, abstract, light -->
+      <source src="https://videos.pexels.com/video-files/4115882/4115882-uhd_2560_1440_24fps.mp4" type="video/mp4">
+      <source src="https://videos.pexels.com/video-files/3163534/3163534-uhd_2560_1440_25fps.mp4" type="video/mp4">
+      <source src="https://videos.pexels.com/video-files/1453804/1453804-uhd_2560_1440_24fps.mp4" type="video/mp4">
+    </video>
+  </div>
+
+  <div class="hero-content">
+    <div class="hero-badge">✦ 30 kunlik bepul sinov</div>
+    <h1>Akkauntlaringizni<br><em>aqlli boshqaring</em></h1>
+    <p class="hero-sub">Hero akkauntlarni saqlang, bir zumda skanerlang va natijalarni real vaqtda kuzating — Telegram orqali, hech qanday texnik bilim kerak emas.</p>
+
+    <div class="hero-actions">
+      <a href="https://t.me/your_bot" class="btn-dark" target="_blank">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.248l-2.012 9.483c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12l-6.871 4.326-2.962-.924c-.643-.204-.657-.643.136-.953l11.57-4.461c.537-.194 1.006.131.875.738z"/></svg>
+        Telegram Botni Boshlash
+      </a>
+      <a href="#how" class="btn-outline">Qanday ishlaydi ↓</a>
+    </div>
+
+    <div class="stats-row">
+      <div class="stat-item">
+        <div class="stat-n">500+</div>
+        <div class="stat-l">Foydalanuvchi</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-n">99.8%</div>
+        <div class="stat-l">Ishonchlilik</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-n">&lt;15s</div>
+        <div class="stat-l">Skaner tezligi</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- HOW IT WORKS -->
+<section id="how">
+  <div class="how-top reveal">
+    <div>
+      <div class="tag">Qanday ishlaydi</div>
+      <div class="sec-title">Uch qadamda<br><em>tayyor</em></div>
+    </div>
+    <p class="how-desc">Murakkab sozlamalar yo'q. Telegram botni oching, akkauntlaringizni qo'shing va ishlating — shunchaki.</p>
+  </div>
+
+  <div class="steps">
+    <div class="step reveal">
+      <div class="step-num">01</div>
+      <div class="step-icon">📱</div>
+      <div class="step-title">Botni oching</div>
+      <p class="step-desc">Telegram orqali HeroScan botini toping. 30 kunlik bepul hisob avtomatik yaratiladi. Hech qanday ro'yxatdan o'tish shart emas.</p>
+    </div>
+    <div class="step reveal" style="transition-delay:.12s">
+      <div class="step-num">02</div>
+      <div class="step-icon">🔑</div>
+      <div class="step-title">Akkauntlarni qo'shing</div>
+      <p class="step-desc">Hero email va parollaringizni xavfsiz tarzda saqlang. Xohlagan vaqt qo'shish, tahrirlash yoki o'chirish imkoni mavjud.</p>
+    </div>
+    <div class="step reveal" style="transition-delay:.24s">
+      <div class="step-num">03</div>
+      <div class="step-icon">⚡</div>
+      <div class="step-title">Skanerlang</div>
+      <p class="step-desc">QR URL yuboring — bot barcha akkauntlarni parallel skanerlaydi. Natijalar batafsil hisobot sifatida keladi.</p>
+    </div>
+  </div>
+</section>
+
+<!-- SOCIAL PROOF -->
+<section id="proof">
+  <div class="proof-head reveal">
+    <div class="tag">Foydalanuvchilar fikri</div>
+    <div class="sec-title">Ular bunga <em>ishondi</em></div>
+  </div>
+
+  <div class="reviews">
+    <div class="review-card reveal">
+      <div class="stars">★★★★★</div>
+      <p class="review-text">"Ilgari har bir akkauntni qo'lda tekshirardim — soatlab vaqt ketardi. Endi HeroScan buni 10 soniyada qiladi. Haqiqatan ham ajoyib!"</p>
+      <div class="reviewer">
+        <div class="ava">AK</div>
+        <div>
+          <div class="rev-name">Akbar K.</div>
+          <div class="rev-role">Marketing menejeri</div>
+        </div>
+      </div>
+    </div>
+    <div class="review-card reveal" style="transition-delay:.12s">
+      <div class="stars">★★★★★</div>
+      <p class="review-text">"Admin panel juda qulay. Barcha foydalanuvchilar va akkauntlarni bir joyda ko'raman. Vaqtimni 5 baravarga tejadim."</p>
+      <div class="reviewer">
+        <div class="ava">SM</div>
+        <div>
+          <div class="rev-name">Sardor M.</div>
+          <div class="rev-role">Tadbirkor</div>
+        </div>
+      </div>
+    </div>
+    <div class="review-card reveal" style="transition-delay:.24s">
+      <div class="stars">★★★★★</div>
+      <p class="review-text">"30 kunlik sinov davomida barcha funksiyalarni sinab ko'rdim. Shundan beri to'xtatmadim. Telegram botlari ichida eng yaxshisi!"</p>
+      <div class="reviewer">
+        <div class="ava">FN</div>
+        <div>
+          <div class="rev-name">Farida N.</div>
+          <div class="rev-role">Freelancer</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="trust-strip reveal">
+    <div class="trust-item">
+      <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+      Ma'lumotlar shifrlangan
+    </div>
+    <div class="trust-item">
+      <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+      24/7 ishlaydi
+    </div>
+    <div class="trust-item">
+      <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+      30 kun bepul
+    </div>
+    <div class="trust-item">
+      <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+      500+ foydalanuvchi
+    </div>
+  </div>
+</section>
+
+<!-- FINAL CTA -->
+<section id="cta">
+  <div class="tag">Hoziroq boshlang</div>
+  <div class="sec-title">30 kun bepul,<br><em>hech narsa kerak emas.</em></div>
+  <p class="sub">Kredit karta yo'q. Murakkab sozlama yo'q. Faqat Telegram va 30 soniya vaqtingiz.</p>
+  <div class="cta-actions">
+    <a href="https://t.me/your_bot" class="btn-warm" target="_blank">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.248l-2.012 9.483c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12l-6.871 4.326-2.962-.924c-.643-.204-.657-.643.136-.953l11.57-4.461c.537-.194 1.006.131.875.738z"/></svg>
+      Bepul Sinov Boshlash
+    </a>
+    <a href="#how" class="btn-ghost-lt">Qanday ishlashini ko'rish</a>
+  </div>
+  <p class="fine">✓ 30 kun to'liq kirish &nbsp;·&nbsp; ✓ Karta talab qilinmaydi &nbsp;·&nbsp; ✓ Istalgan vaqt bekor qilish</p>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <a href="#" class="foot-logo">HeroScan</a>
+  <div class="foot-links">
+    <a href="#">Shartlar</a>
+    <a href="#">Maxfiylik</a>
+    <a href="https://t.me/your_bot" target="_blank">Telegram</a>
+  </div>
+  <div class="foot-copy">© 2025 HeroScan</div>
+</footer>
+
+<script>
+  // Scroll reveal
+  const io = new IntersectionObserver(entries => {
+    entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('on'); });
+  }, { threshold: 0.1 });
+  document.querySelectorAll('.reveal').forEach(el => io.observe(el));
+
+  // Nav on scroll
+  const nav = document.querySelector('nav');
+  window.addEventListener('scroll', () => {
+    nav.style.background = window.scrollY > 40
+      ? 'rgba(253,250,245,.97)'
+      : 'rgba(253,250,245,.88)';
+  }, { passive: true });
+
+  // Smooth scroll
+  document.querySelectorAll('a[href^="#"]').forEach(a => {
+    a.addEventListener('click', e => {
+      const t = document.querySelector(a.getAttribute('href'));
+      if (t) { e.preventDefault(); t.scrollIntoView({ behavior: 'smooth' }); }
+    });
+  });
+</script>
+</body>
+</html>
