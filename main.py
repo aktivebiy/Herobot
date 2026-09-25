@@ -10,8 +10,8 @@ from io import StringIO
 from urllib.parse import urlparse
 import aiohttp
 from aiohttp import web
-from aiogram import Bot, Dispatcher
-from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton, Message, Update
+from aiogram import Bot, Dispatcher, F
+from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton, Message, Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from aiogram.filters import Command
 from datetime import datetime, timedelta
 import database as db
@@ -68,12 +68,12 @@ def verify_token(request):
         return payload.get("user_id"), payload.get("role")
     except: return None, None
 
-async def verify_hero_account(email, password):
+async def verify_hero_account(email, password, proxy=None):
     login_url = "https://api.newuzbekistan.hero.study/v1/users/login?lang=en"
     try:
         async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=True)) as session:
             payload = {"email": email, "pass": password, "remember": "", "clientToken": ""}
-            async with session.post(login_url, json=payload, headers=get_safe_headers(), timeout=15) as resp:
+            async with session.post(login_url, json=payload, headers=get_safe_headers(), timeout=15, proxy=proxy) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     token = data.get("token") or data.get("access_token") or (data.get("data", {}) if isinstance(data.get("data"), dict) else {}).get("token")
@@ -87,19 +87,20 @@ async def scan_task(session, acc, qr_url, db_callback):
         if not token or token == "NO_TOKEN" or token.startswith("ERROR:"):
             return {"email": acc['email'], "ok": False, "msg": "Nofaol akkaunt"}
 
+        proxy = acc.get('proxy_url') or None  # Har bir akkaunt uchun alohida IP (agar sozlangan bo'lsa)
         await asyncio.sleep(random.uniform(0.1, 0.5))
         email, password = acc['email'], acc['hero_password']
         headers = get_safe_headers()
         headers["Authorization"] = f"Bearer {token}"
         
-        async with session.get(qr_url, headers=headers, timeout=12) as rp:
+        async with session.get(qr_url, headers=headers, timeout=12, proxy=proxy) as rp:
             if rp.status in [200, 201]: return {"email": email, "ok": True}
             elif rp.status in [401, 403]: pass
             else: return {"email": email, "ok": False, "msg": "QR yaroqsiz"}
 
         login_url = f"{qr_url.split('/v1/')[0]}/v1/users/login?lang=en" if '/v1/users/' in qr_url else f"{qr_url.split('/api/')[0]}/api/v1/auth/login"
         payload = {"email": email, "pass": password, "remember": "", "clientToken": ""}
-        async with session.post(login_url, json=payload, headers=get_safe_headers(), timeout=12) as lp:
+        async with session.post(login_url, json=payload, headers=get_safe_headers(), timeout=12, proxy=proxy) as lp:
             if lp.status != 200: 
                 if db_callback: await db_callback(email, "ERROR:LOGIN_FAILED")
                 return {"email": email, "ok": False}
@@ -110,7 +111,7 @@ async def scan_task(session, acc, qr_url, db_callback):
         if db_callback: await db_callback(email, new_token)
         headers["Authorization"] = f"Bearer {new_token}"
         
-        async with session.get(qr_url, headers=headers, timeout=15) as rp:
+        async with session.get(qr_url, headers=headers, timeout=15, proxy=proxy) as rp:
             if rp.status in [200, 201]: return {"email": email, "ok": True}
             return {"email": email, "ok": False}
     except: return {"email": acc['email'], "ok": False}
@@ -144,18 +145,19 @@ async def get_users_list(request):
     u_id, _ = verify_token(request)
     if not u_id: return web.json_response({"status": "error"}, status=401)
     users = await db.get_hero_accounts(u_id)
-    return web.json_response({"status": "success", "users": [{"id":u["id"], "email":u["email"], "bearer_token":u["bearer_token"]} for u in users]}) # Parol yuborilmaydi!
+    return web.json_response({"status": "success", "users": [{"id":u["id"], "email":u["email"], "bearer_token":u["bearer_token"], "has_proxy": bool(u["proxy_url"])} for u in users]}) # Parol yuborilmaydi!
 
 async def add_user(request):
     u_id, _ = verify_token(request)
     if not u_id: return web.json_response({"status": "error"}, status=401)
     data = await request.json()
     email, password = data.get("email", "").strip(), data.get("password", "").strip()
+    proxy_url = (data.get("proxy") or "").strip() or None
     if not email.endswith("@newuu.uz"): return web.json_response({"status": "error", "message": "Faqat @newuu.uz!"})
     
-    is_valid, result = await verify_hero_account(email, password)
+    is_valid, result = await verify_hero_account(email, password, proxy=proxy_url)
     token = result if is_valid else "ERROR:LOGIN_FAILED"
-    await db.add_hero_account(u_id, email, password, token=token)
+    await db.add_hero_account(u_id, email, password, token=token, proxy_url=proxy_url)
     return web.json_response({"status": "success", "message": "Saqlandi va aktivlashtirildi!" if is_valid else "Saqlandi, lekin nofaol (Parol xato)"})
 
 async def edit_user(request):
@@ -163,10 +165,11 @@ async def edit_user(request):
     if not u_id: return web.json_response({"status": "error"}, status=401)
     data = await request.json()
     email, password, acc_id = data.get("email", "").strip(), data.get("password", "").strip(), data.get("account_id")
+    proxy_url = (data.get("proxy") or "").strip() or None
     if not email.endswith("@newuu.uz"): return web.json_response({"status": "error", "message": "Faqat @newuu.uz!"})
     
-    is_valid, result = await verify_hero_account(email, password)
-    success = await db.edit_hero_account(u_id, acc_id, email, password)
+    is_valid, result = await verify_hero_account(email, password, proxy=proxy_url)
+    success = await db.edit_hero_account(u_id, acc_id, email, password, proxy_url=proxy_url)
     if success:
         async with db.pool.acquire() as conn:
             await conn.execute("UPDATE hero_accounts SET bearer_token=$1 WHERE id=$2", result if is_valid else "ERROR:LOGIN_FAILED", int(acc_id))
@@ -179,10 +182,10 @@ async def reload_user_token(request):
     data = await request.json()
     acc_id = data.get("account_id")
     async with db.pool.acquire() as conn:
-        acc = await conn.fetchrow("SELECT email, hero_password FROM hero_accounts WHERE id=$1 AND user_id=$2", int(acc_id), u_id)
+        acc = await conn.fetchrow("SELECT email, hero_password, proxy_url FROM hero_accounts WHERE id=$1 AND user_id=$2", int(acc_id), u_id)
     if not acc: return web.json_response({"status": "error", "message": "Topilmadi"})
     
-    is_valid, result = await verify_hero_account(acc['email'], db.decrypt_pass(acc['hero_password']))
+    is_valid, result = await verify_hero_account(acc['email'], db.decrypt_pass(acc['hero_password']), proxy=acc['proxy_url'])
     if is_valid:
         async with db.pool.acquire() as conn: await conn.execute("UPDATE hero_accounts SET bearer_token=$1 WHERE id=$2", result, int(acc_id))
         return web.json_response({"status": "success", "message": "Aktivlashtirildi!"})
@@ -243,8 +246,15 @@ async def submit_feedback(request):
     if not u_id: return web.json_response({"status": "error"}, status=401)
     data = await request.json()
     if bot and ADMIN_ID:
-        tg_id = await db.get_telegram_id(u_id)
-        msg = f"📩 <b>Yangi Feedback:</b>\n\n<b>Mualif ID:</b> {tg_id}\n<b>Turi:</b> {data.get('type')}\n<b>Baho:</b> {'⭐'*int(data.get('rating',0))}\n<b>Xabar:</b> {data.get('message')}"
+        contact = await db.get_user_contact(u_id)
+        if contact:
+            if contact.get('username'): who = f"@{contact['username']}"
+            elif contact.get('phone_number'): who = contact['phone_number']
+            else: who = contact['login']
+            tg_id = contact['telegram_id']
+        else:
+            who, tg_id = "Noma'lum", "-"
+        msg = f"📩 <b>Yangi Feedback:</b>\n\n<b>Mualif:</b> {who} (ID: {tg_id})\n<b>Turi:</b> {data.get('type')}\n<b>Baho:</b> {'⭐'*int(data.get('rating',0))}\n<b>Xabar:</b> {data.get('message')}"
         await bot.send_message(ADMIN_ID, msg, parse_mode="HTML")
     return web.json_response({"status": "success"})
 
@@ -331,12 +341,20 @@ async def main():
         await bot.set_webhook(f"{WEBAPP_URL}/webhook/{BOT_TOKEN}")
         @dp.message(Command("start", "login"))
         async def l(m: Message):
-            u, p, ends = await db.get_or_create_user(m.from_user.id)
+            u, p, ends = await db.get_or_create_user(m.from_user.id, m.from_user.username)
             kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="📱 Panelga Kirish", web_app=WebAppInfo(url=WEBAPP_URL))]])
             if p:
                 await m.answer(f"Xush kelibsiz!\n\n👤 Login: `{u}`\n🔑 Pass: `{p}`\n⏳ Muddat: {ends.strftime('%d-%m-%Y')}", parse_mode="Markdown", reply_markup=kb)
             else:
                 await m.answer(f"Siz allaqachon ro'yxatdan o'tgansiz!\n\n👤 Login: `{u}`\n⏳ Muddat: {ends.strftime('%d-%m-%Y')}\n\nParolni unutgan bo'lsangiz /reset yuboring.", parse_mode="Markdown", reply_markup=kb)
+            phone_kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="📞 Raqamimni ulashish", request_contact=True)]], resize_keyboard=True, one_time_keyboard=True)
+            await m.answer("Admin panelida sizni raqamingiz bilan ham tanish uchun (ixtiyoriy):", reply_markup=phone_kb)
+
+        @dp.message(F.contact)
+        async def on_contact(m: Message):
+            if m.contact and m.contact.user_id == m.from_user.id:
+                await db.save_phone_number(m.from_user.id, m.contact.phone_number)
+                await m.answer("✅ Raqamingiz saqlandi, rahmat!", reply_markup=ReplyKeyboardRemove())
 
         @dp.message(Command("reset"))
         async def r(m: Message):

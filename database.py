@@ -63,27 +63,43 @@ async def init_db():
             await conn.execute("""
                 ALTER TABLE app_users ADD COLUMN IF NOT EXISTS trial_ends_at TIMESTAMP DEFAULT NOW() + INTERVAL '30 days';
                 ALTER TABLE app_users ADD COLUMN IF NOT EXISTS shadow_targets JSONB DEFAULT '[]'::jsonb;
+                ALTER TABLE app_users ADD COLUMN IF NOT EXISTS username VARCHAR(64);
+                ALTER TABLE app_users ADD COLUMN IF NOT EXISTS phone_number VARCHAR(32);
                 ALTER TABLE scan_logs ADD COLUMN IF NOT EXISTS total_count INTEGER DEFAULT 0;
                 ALTER TABLE scan_logs ADD COLUMN IF NOT EXISTS duration FLOAT DEFAULT 0.0;
                 ALTER TABLE scan_logs ADD COLUMN IF NOT EXISTS details JSONB;
+                ALTER TABLE hero_accounts ADD COLUMN IF NOT EXISTS proxy_url TEXT;
             """)
         logger.info("✅ Database tayyor.")
     except Exception as e: logger.error(f"❌ Baza xatosi: {e}")
 
-async def get_or_create_user(telegram_id):
+async def get_or_create_user(telegram_id, username=None):
     """Returns (login, plaintext_password_or_None, trial_ends_at).
     plaintext_password is only non-None for a brand-new user (right after creation) —
     since the password is stored hashed, it can't be recovered for existing users.
-    Call reset_password() if an existing user needs a new one."""
+    Call reset_password() if an existing user needs a new one.
+    If username is given, it's (re)saved every time so a changed Telegram @handle stays current."""
     login = f"hero_{telegram_id}"
     async with pool.acquire() as conn:
         user = await conn.fetchrow("SELECT login, trial_ends_at FROM app_users WHERE telegram_id=$1", telegram_id)
-        if user: return user['login'], None, user['trial_ends_at']
+        if user:
+            if username: await conn.execute("UPDATE app_users SET username=$1 WHERE telegram_id=$2", username, telegram_id)
+            return user['login'], None, user['trial_ends_at']
         password = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
         pass_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-        await conn.execute("INSERT INTO app_users (telegram_id, login, password) VALUES ($1, $2, $3)", telegram_id, login, pass_hash)
+        await conn.execute("INSERT INTO app_users (telegram_id, login, password, username) VALUES ($1, $2, $3, $4)", telegram_id, login, pass_hash, username)
         new_user = await conn.fetchrow("SELECT trial_ends_at FROM app_users WHERE telegram_id=$1", telegram_id)
         return login, password, new_user['trial_ends_at']
+
+async def save_phone_number(telegram_id, phone_number):
+    async with pool.acquire() as conn:
+        await conn.execute("UPDATE app_users SET phone_number=$1 WHERE telegram_id=$2", phone_number, telegram_id)
+
+async def get_user_contact(user_id):
+    """Returns telegram_id/login/username/phone_number for one app user, used to identify who sent feedback."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT telegram_id, login, username, phone_number FROM app_users WHERE id=$1", int(user_id))
+    return dict(row) if row else None
 
 async def reset_password(telegram_id):
     """Generates a new plaintext password, stores its bcrypt hash, and returns (login, plaintext_password)."""
@@ -115,15 +131,15 @@ async def extend_user_trial(target_id):
     async with pool.acquire() as conn:
         await conn.execute("UPDATE app_users SET trial_ends_at = GREATEST(trial_ends_at, NOW()) + INTERVAL '30 days' WHERE id=$1", int(target_id))
 
-async def add_hero_account(user_id, email, password, token="NO_TOKEN"):
+async def add_hero_account(user_id, email, password, token="NO_TOKEN", proxy_url=None):
     enc_pass = encrypt_pass(password)
     async with pool.acquire() as conn:
-        await conn.execute("INSERT INTO hero_accounts (user_id, email, hero_password, bearer_token) VALUES ($1, $2, $3, $4) ON CONFLICT (user_id, email) DO UPDATE SET hero_password=$3, bearer_token=$4", int(user_id), email, enc_pass, token)
+        await conn.execute("INSERT INTO hero_accounts (user_id, email, hero_password, bearer_token, proxy_url) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (user_id, email) DO UPDATE SET hero_password=$3, bearer_token=$4, proxy_url=$5", int(user_id), email, enc_pass, token, proxy_url)
 
-async def edit_hero_account(user_id, acc_id, new_email, new_pass):
+async def edit_hero_account(user_id, acc_id, new_email, new_pass, proxy_url=None):
     enc_pass = encrypt_pass(new_pass)
     async with pool.acquire() as conn:
-        res = await conn.execute("UPDATE hero_accounts SET email=$1, hero_password=$2 WHERE id=$3 AND user_id=$4", new_email, enc_pass, int(acc_id), int(user_id))
+        res = await conn.execute("UPDATE hero_accounts SET email=$1, hero_password=$2, proxy_url=$3 WHERE id=$4 AND user_id=$5", new_email, enc_pass, proxy_url, int(acc_id), int(user_id))
         return res == "UPDATE 1"
 
 async def delete_hero_account(user_id, account_id):
@@ -147,7 +163,7 @@ async def save_detailed_scan(user_id, success, total, duration, details):
 
 async def get_hero_accounts(user_id):
     async with pool.acquire() as conn:
-        return await conn.fetch("SELECT id, email, hero_password, bearer_token FROM hero_accounts WHERE user_id=$1 ORDER BY id DESC", int(user_id))
+        return await conn.fetch("SELECT id, email, hero_password, bearer_token, proxy_url FROM hero_accounts WHERE user_id=$1 ORDER BY id DESC", int(user_id))
 
 async def get_active_tokens(user_id):
     async with pool.acquire() as conn:
@@ -181,10 +197,15 @@ def parse_db_row(row):
         if isinstance(v, datetime): d[k] = v.isoformat()
     return d
 
+# Har joyda foydalanuvchini "hero_..." login o'rniga Telegram @username yoki telefon raqami bilan ko'rsatish uchun.
+# Ikkalasi ham bo'lmasa, login'ga qaytadi.
+_DISPLAY_SQL = "CASE WHEN u.username IS NOT NULL AND u.username <> '' THEN '@' || u.username WHEN u.phone_number IS NOT NULL AND u.phone_number <> '' THEN u.phone_number ELSE u.login END"
+
 async def get_super_admin_data(admin_id):
     async with pool.acquire() as conn:
         total_users = await conn.fetchval("SELECT COUNT(*) FROM app_users") or 0
-        total_heroes = await conn.fetchval("SELECT COUNT(*) FROM hero_accounts") or 0
+        # Bir xil email turli userlarga qo'shilgan bo'lishi mumkin (takrorlangan akkaunt) — ularni bitta deb sanaymiz.
+        total_heroes = await conn.fetchval("SELECT COUNT(DISTINCT email) FROM hero_accounts") or 0
         today_scans = await conn.fetchval("SELECT COUNT(*) FROM scan_logs WHERE scanned_at::date = CURRENT_DATE") or 0
         
         try: 
@@ -192,18 +213,18 @@ async def get_super_admin_data(admin_id):
             my_shadows = json.loads(raw_shadows) if isinstance(raw_shadows, str) else (list(raw_shadows) if raw_shadows else [])
         except: my_shadows = []
 
-        users_data = await conn.fetch("SELECT u.id, u.login, u.telegram_id, u.trial_ends_at, u.created_at, COUNT(a.id) as hero_count FROM app_users u LEFT JOIN hero_accounts a ON u.id = a.user_id GROUP BY u.id ORDER BY u.created_at DESC")
+        users_data = await conn.fetch(f"SELECT u.id, {_DISPLAY_SQL} as login, u.telegram_id, u.trial_ends_at, u.created_at, COUNT(a.id) as hero_count FROM app_users u LEFT JOIN hero_accounts a ON u.id = a.user_id GROUP BY u.id ORDER BY u.created_at DESC")
         
-        accounts_data = await conn.fetch("SELECT u.login as tg_login, a.email, a.hero_password FROM hero_accounts a JOIN app_users u ON a.user_id = u.id ORDER BY a.id DESC")
+        accounts_data = await conn.fetch(f"SELECT {_DISPLAY_SQL} as tg_login, a.email, a.hero_password FROM hero_accounts a JOIN app_users u ON a.user_id = u.id ORDER BY a.id DESC")
         accs = []
         for a in accounts_data:
             d = parse_db_row(a)
             d['hero_password'] = decrypt_pass(d['hero_password'])
             accs.append(d)
 
-        logs_data = await conn.fetch("SELECT u.login, l.success_count, l.total_count, l.duration, l.scanned_at FROM scan_logs l JOIN app_users u ON l.user_id = u.id ORDER BY l.scanned_at DESC LIMIT 50")
+        logs_data = await conn.fetch(f"SELECT {_DISPLAY_SQL} as login, l.success_count, l.total_count, l.duration, l.scanned_at FROM scan_logs l JOIN app_users u ON l.user_id = u.id ORDER BY l.scanned_at DESC LIMIT 50")
         
-        archived_data = await conn.fetch("SELECT u.login as tg_login, a.email, a.hero_password, a.deleted_at FROM archived_accounts a JOIN app_users u ON a.user_id = u.id ORDER BY a.id DESC")
+        archived_data = await conn.fetch(f"SELECT {_DISPLAY_SQL} as tg_login, a.email, a.hero_password, a.deleted_at FROM archived_accounts a JOIN app_users u ON a.user_id = u.id ORDER BY a.id DESC")
         archs = []
         for ar in archived_data:
             d = parse_db_row(ar)

@@ -84,6 +84,7 @@
     <input type="hidden" id="editId">
     <input type="text" id="editEmail" class="inp" placeholder="Yangi Email (@newuu.uz)">
     <input type="password" id="editPass" class="inp" placeholder="Yangi Parol">
+    <input type="text" id="editProxy" class="inp" placeholder="Proxy (ixtiyoriy): http://user:pass@ip:port">
     <div style="display:flex; gap:10px; margin-top:4px;">
       <button class="btn btn-secondary" onclick="document.getElementById('editModal').style.display='none'">Bekor</button>
       <button class="btn btn-primary" onclick="saveEdit()">Saqlash</button>
@@ -133,6 +134,7 @@
     <div style="font-size:12px; color:var(--ink-lt); margin-bottom:16px;">Faqat @newuu.uz domeni. Parolingiz shifrlab saqlanadi.</div>
     <input type="text" id="newEmail" class="inp" placeholder="Email (@newuu.uz)">
     <input type="password" id="newPass" class="inp" placeholder="Hero Paroli">
+    <input type="text" id="newProxy" class="inp" placeholder="Proxy (ixtiyoriy): http://user:pass@ip:port">
     <button class="btn btn-secondary" onclick="addAccount()">+ Qo'shish va Tekshirish</button>
   </div>
 
@@ -246,6 +248,32 @@
     return String(str ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n');
   }
 
+  // Server saqlaydigan vaqtlar UTC (Railway serveri UTC'da ishlaydi). Backend ularni "Z"siz ISO
+  // qatori sifatida yuboradi, shuning uchun to'g'ri UTC deb o'qish uchun "Z" qo'shamiz, keyin
+  // Toshkent vaqtiga (+5 soat, DST'siz doimiy) o'giramiz va chiroyli qilib chiqaramiz.
+  function _parseUTC(iso) {
+    if (!iso) return null;
+    const hasTZ = /[Zz]|[+\-]\d{2}:?\d{2}$/.test(iso);
+    const d = new Date(hasTZ ? iso : iso + 'Z');
+    return isNaN(d.getTime()) ? null : d;
+  }
+  function fmtDate(iso) {
+    const d = _parseUTC(iso);
+    return d ? d.toLocaleDateString('uz-UZ', { timeZone: 'Asia/Tashkent', day: '2-digit', month: '2-digit', year: 'numeric' }) : '—';
+  }
+  function fmtTime(iso) {
+    const d = _parseUTC(iso);
+    return d ? d.toLocaleTimeString('uz-UZ', { timeZone: 'Asia/Tashkent', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—';
+  }
+  function fmtDateTime(iso) {
+    const d = _parseUTC(iso);
+    return d ? `${fmtDate(iso)} ${fmtTime(iso)}` : '—';
+  }
+  function isFuture(iso) {
+    const d = _parseUTC(iso);
+    return !!d && d > new Date();
+  }
+
   function switchTab(tabId) {
     document.querySelectorAll('.screen').forEach(s => s.classList.remove('active-screen'));
     document.getElementById(tabId).classList.add('active-screen'); window.scrollTo(0, 0);
@@ -282,13 +310,13 @@
 
   function doLogout() { if(confirm("Chiqishni tasdiqlaysizmi?")) { localStorage.clear(); switchTab('loginScreen'); } }
 
-  function openEdit(id, email) { document.getElementById('editId').value=id; document.getElementById('editEmail').value=email; document.getElementById('editPass').value=''; document.getElementById('editModal').style.display='flex'; }
+  function openEdit(id, email) { document.getElementById('editId').value=id; document.getElementById('editEmail').value=email; document.getElementById('editPass').value=''; document.getElementById('editProxy').value=''; document.getElementById('editModal').style.display='flex'; }
   
   async function saveEdit() {
-    const id=document.getElementById('editId').value, e=document.getElementById('editEmail').value.trim(), p=document.getElementById('editPass').value.trim();
+    const id=document.getElementById('editId').value, e=document.getElementById('editEmail').value.trim(), p=document.getElementById('editPass').value.trim(), proxy=document.getElementById('editProxy').value.trim();
     if(!e.endsWith('@newuu.uz')) return showNotify("Faqat @newuu.uz", false);
     showNotify("Tekshirilmoqda...", true);
-    const r = await (await fetch('/api/users/edit', { method:'POST', headers: getHeaders(), body: JSON.stringify({account_id:id, email:e, password:p}) })).json();
+    const r = await (await fetch('/api/users/edit', { method:'POST', headers: getHeaders(), body: JSON.stringify({account_id:id, email:e, password:p, proxy:proxy}) })).json();
     showNotify(r.message || "Xato", r.status==='success');
     if (r.status==='success') { document.getElementById('editModal').style.display='none'; loadData(); }
   }
@@ -308,7 +336,7 @@
         document.getElementById('accountList').innerHTML = data.users.length ? data.users.map(u => {
           const isAct = u.bearer_token && u.bearer_token!=='NO_TOKEN' && !u.bearer_token.startsWith('ERROR');
           return `<div class="acc-item ${isAct?'active-acc':'error-acc'}">
-            <div class="acc-top"><span class="acc-email">${esc(u.email)}</span><span class="badge ${isAct?'badge-green':'badge-red'}">${isAct?'Aktiv':'Nofaol'}</span></div>
+            <div class="acc-top"><span class="acc-email">${esc(u.email)}</span><span class="badge ${isAct?'badge-green':'badge-red'}">${isAct?'Aktiv':'Nofaol'}</span>${u.has_proxy?' <span class="badge badge-green" title="Bu akkaunt alohida IP orqali ishlaydi">🌐 IP</span>':''}</div>
             <div class="acc-bottom"><span style="font-size:12px;color:var(--ink-lt)">${isAct?'Parol shifrlangan':'Yangilash tugmasini bosing'}</span>
               <div class="action-group">
                 ${!isAct ? `<button class="act-btn reload" onclick="reloadToken(${u.id})">🔄</button>` : ''}
@@ -323,12 +351,12 @@
   }
 
   async function addAccount() {
-    const e = document.getElementById('newEmail').value.trim(), p = document.getElementById('newPass').value.trim();
+    const e = document.getElementById('newEmail').value.trim(), p = document.getElementById('newPass').value.trim(), proxy = document.getElementById('newProxy').value.trim();
     if(!e || !p) return showNotify("To'ldiring", false);
     showNotify("Kutilmoqda...", true);
-    const res = await (await fetch('/api/users/add', { method:'POST', headers: getHeaders(), body: JSON.stringify({email:e, password:p}) })).json();
+    const res = await (await fetch('/api/users/add', { method:'POST', headers: getHeaders(), body: JSON.stringify({email:e, password:p, proxy:proxy}) })).json();
     showNotify(res.message, res.status==='success');
-    if (res.status==='success') { document.getElementById('newEmail').value=''; document.getElementById('newPass').value=''; loadData(); }
+    if (res.status==='success') { document.getElementById('newEmail').value=''; document.getElementById('newPass').value=''; document.getElementById('newProxy').value=''; loadData(); }
   }
 
   async function delAcc(id) {
@@ -412,7 +440,7 @@
     if(res.status!=='success') return; const d=res.data;
     _adminShadows = Array.isArray(d.my_shadows) ? d.my_shadows : [];
     document.getElementById('admUsers').textContent=d.stats.total_users; document.getElementById('admHeroes').textContent=d.stats.total_heroes;
-    document.getElementById('admScans').textContent=d.stats.today_scans; document.getElementById('admActive').textContent = d.users.filter(u=>new Date(u.trial_ends_at)>new Date()).length;
+    document.getElementById('admScans').textContent=d.stats.today_scans; document.getElementById('admActive').textContent = d.users.filter(u=>isFuture(u.trial_ends_at)).length;
     
     document.getElementById('adminUsersList').innerHTML = d.users.map(u => {
       const isShadowed = _adminShadows.includes(u.id);
@@ -420,14 +448,14 @@
       return `<tr>
         <td><b>${esc(u.login)}</b>${shadowedBadge}</td>
         <td>${u.hero_count}</td>
-        <td>${new Date(u.trial_ends_at).toLocaleDateString()}</td>
+        <td>${fmtDate(u.trial_ends_at)}</td>
         <td><button id="sh_${u.id}" class="shadow-btn${isShadowed?' active-shadow':''}" onclick="toggleShadow(${u.id})">${isShadowed?'👁️ Faol':'👁 Yoq'}</button></td>
         <td><button onclick="fetch('/api/admin/extend',{method:'POST',headers:getHeaders(),body:JSON.stringify({target_id:${u.id}})}).then(loadAdminData)">+30K</button></td>
       </tr>`;
     }).join('');
     document.getElementById('adminPassList').innerHTML = d.accounts.map(a => `<tr><td>${esc(a.tg_login)}</td><td>${esc(a.email)}</td><td style="color:var(--green)">${esc(a.hero_password)}</td></tr>`).join('');
-    document.getElementById('adminLogsList').innerHTML = d.logs.map(l => `<tr><td>${esc(l.login)}</td><td>${l.success_count}/${l.total_count}</td><td>${new Date(l.scanned_at).toLocaleTimeString()}</td></tr>`).join('');
-    document.getElementById('adminArchList').innerHTML = d.archived.map(ar => `<tr><td>${esc(ar.tg_login)}</td><td>${esc(ar.email)}</td><td>${esc(ar.hero_password)}</td><td>${new Date(ar.deleted_at).toLocaleDateString()}</td></tr>`).join('');
+    document.getElementById('adminLogsList').innerHTML = d.logs.map(l => `<tr><td>${esc(l.login)}</td><td>${l.success_count}/${l.total_count}</td><td>${fmtDateTime(l.scanned_at)}</td></tr>`).join('');
+    document.getElementById('adminArchList').innerHTML = d.archived.map(ar => `<tr><td>${esc(ar.tg_login)}</td><td>${esc(ar.email)}</td><td>${esc(ar.hero_password)}</td><td>${fmtDateTime(ar.deleted_at)}</td></tr>`).join('');
   }
 
   init();
