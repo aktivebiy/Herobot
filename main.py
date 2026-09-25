@@ -185,7 +185,8 @@ async def reload_user_token(request):
         acc = await conn.fetchrow("SELECT email, hero_password, proxy_url FROM hero_accounts WHERE id=$1 AND user_id=$2", int(acc_id), u_id)
     if not acc: return web.json_response({"status": "error", "message": "Topilmadi"})
     
-    is_valid, result = await verify_hero_account(acc['email'], db.decrypt_pass(acc['hero_password']), proxy=acc['proxy_url'])
+    proxy = db.decrypt_pass(acc['proxy_url']) if acc['proxy_url'] else None
+    is_valid, result = await verify_hero_account(acc['email'], db.decrypt_pass(acc['hero_password']), proxy=proxy)
     if is_valid:
         async with db.pool.acquire() as conn: await conn.execute("UPDATE hero_accounts SET bearer_token=$1 WHERE id=$2", result, int(acc_id))
         return web.json_response({"status": "success", "message": "Aktivlashtirildi!"})

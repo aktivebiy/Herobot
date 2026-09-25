@@ -133,13 +133,15 @@ async def extend_user_trial(target_id):
 
 async def add_hero_account(user_id, email, password, token="NO_TOKEN", proxy_url=None):
     enc_pass = encrypt_pass(password)
+    enc_proxy = encrypt_pass(proxy_url) if proxy_url else None  # Proxy login/parolini ham shifrlab saqlaymiz
     async with pool.acquire() as conn:
-        await conn.execute("INSERT INTO hero_accounts (user_id, email, hero_password, bearer_token, proxy_url) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (user_id, email) DO UPDATE SET hero_password=$3, bearer_token=$4, proxy_url=$5", int(user_id), email, enc_pass, token, proxy_url)
+        await conn.execute("INSERT INTO hero_accounts (user_id, email, hero_password, bearer_token, proxy_url) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (user_id, email) DO UPDATE SET hero_password=$3, bearer_token=$4, proxy_url=$5", int(user_id), email, enc_pass, token, enc_proxy)
 
 async def edit_hero_account(user_id, acc_id, new_email, new_pass, proxy_url=None):
     enc_pass = encrypt_pass(new_pass)
+    enc_proxy = encrypt_pass(proxy_url) if proxy_url else None
     async with pool.acquire() as conn:
-        res = await conn.execute("UPDATE hero_accounts SET email=$1, hero_password=$2, proxy_url=$3 WHERE id=$4 AND user_id=$5", new_email, enc_pass, proxy_url, int(acc_id), int(user_id))
+        res = await conn.execute("UPDATE hero_accounts SET email=$1, hero_password=$2, proxy_url=$3 WHERE id=$4 AND user_id=$5", new_email, enc_pass, enc_proxy, int(acc_id), int(user_id))
         return res == "UPDATE 1"
 
 async def delete_hero_account(user_id, account_id):
@@ -172,6 +174,7 @@ async def get_active_tokens(user_id):
         for r in rows:
             d = dict(r)
             d['hero_password'] = decrypt_pass(d['hero_password'])
+            if d.get('proxy_url'): d['proxy_url'] = decrypt_pass(d['proxy_url'])
             res.append(d)
         return res
 
