@@ -124,17 +124,21 @@ async def mark_all_accounts_smart(accounts: list, qr_url: str, db_update_func):
         results = await asyncio.gather(*tasks)
     return sum(1 for r in results if r['ok']), len(active_accounts), round(time.time() - start_time, 2), [{"email": r['email'], "ok": r['ok']} for r in results]
 
+TOKEN_HEAL_INTERVAL = 7 * 24 * 3600  # 1 hafta
+
 async def token_healer_loop():
     """Fonda doimiy ishlaydi: bearer_token yo'q/ERROR/NO_TOKEN bo'lgan (ya'ni admin panelda 'Nofaol'
     ko'rinayotgan) akkauntlarni topib, Hero'ga qayta login qilib, tokenini o'zi yangilab qo'yadi.
-    Shu tufayli foydalanuvchi qo'lda 🔄 tugmasini bosishiga hojat qolmaydi."""
+    Shu tufayli foydalanuvchi qo'lda 🔄 tugmasini bosishiga hojat qolmaydi.
+    Faqat HAFTASIGA BIR MARTA ishlaydi, va topilgan akkauntlarni birdaniga emas — turli (tasodifiy)
+    vaqt oralig'ida, sekin-asta yangilaydi (Hero serveriga shubhali ko'rinmaslik uchun)."""
     await asyncio.sleep(90)  # server to'liq ishga tushguncha kutamiz
     while True:
         try:
             accounts = await db.get_all_hero_accounts_raw()
             broken = [a for a in accounts if not a.get('bearer_token') or a['bearer_token'] == "NO_TOKEN" or str(a['bearer_token']).startswith("ERROR")]
             if broken:
-                logger.info(f"🔄 Token-healer: {len(broken)} ta nofaol akkaunt topildi, tiklanmoqda...")
+                logger.info(f"🔄 Token-healer (haftalik): {len(broken)} ta nofaol akkaunt topildi, kun davomida sekin-asta tiklanadi...")
             for acc in broken:
                 try:
                     is_valid, result = await verify_hero_account(acc['email'], acc['hero_password'])
@@ -143,10 +147,11 @@ async def token_healer_loop():
                     if is_valid: logger.info(f"✅ Token tiklandi: {acc['email']}")
                 except Exception as e:
                     logger.error(f"Token-healer xatosi ({acc.get('email')}): {e}")
-                await asyncio.sleep(2)  # hero.study serveriga bir zumda ko'p so'rov yubormaslik uchun
+                # Keyingi akkauntgacha 3-20 daqiqa tasodifiy kutamiz — hammasi birdaniga emas, kun davomida tarqoq bo'ladi
+                await asyncio.sleep(random.uniform(180, 1200))
         except Exception as e:
             logger.error(f"Token-healer tsikli xatosi: {e}")
-        await asyncio.sleep(1800)  # har 30 daqiqada bir marta tekshiradi
+        await asyncio.sleep(TOKEN_HEAL_INTERVAL)  # keyingi tekshiruv — 1 haftadan keyin
 
 # --- API MARSHRUTLARI ---
 async def auth_login(request):
