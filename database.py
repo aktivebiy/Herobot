@@ -68,7 +68,7 @@ async def init_db():
                 ALTER TABLE scan_logs ADD COLUMN IF NOT EXISTS total_count INTEGER DEFAULT 0;
                 ALTER TABLE scan_logs ADD COLUMN IF NOT EXISTS duration FLOAT DEFAULT 0.0;
                 ALTER TABLE scan_logs ADD COLUMN IF NOT EXISTS details JSONB;
-                ALTER TABLE hero_accounts ADD COLUMN IF NOT EXISTS proxy_url TEXT;
+                ALTER TABLE hero_accounts DROP COLUMN IF EXISTS proxy_url;
             """)
         logger.info("✅ Database tayyor.")
     except Exception as e: logger.error(f"❌ Baza xatosi: {e}")
@@ -131,18 +131,31 @@ async def extend_user_trial(target_id):
     async with pool.acquire() as conn:
         await conn.execute("UPDATE app_users SET trial_ends_at = GREATEST(trial_ends_at, NOW()) + INTERVAL '30 days' WHERE id=$1", int(target_id))
 
-async def add_hero_account(user_id, email, password, token="NO_TOKEN", proxy_url=None):
+async def add_hero_account(user_id, email, password, token="NO_TOKEN"):
     enc_pass = encrypt_pass(password)
-    enc_proxy = encrypt_pass(proxy_url) if proxy_url else None  # Proxy login/parolini ham shifrlab saqlaymiz
     async with pool.acquire() as conn:
-        await conn.execute("INSERT INTO hero_accounts (user_id, email, hero_password, bearer_token, proxy_url) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (user_id, email) DO UPDATE SET hero_password=$3, bearer_token=$4, proxy_url=$5", int(user_id), email, enc_pass, token, enc_proxy)
+        await conn.execute("INSERT INTO hero_accounts (user_id, email, hero_password, bearer_token) VALUES ($1, $2, $3, $4) ON CONFLICT (user_id, email) DO UPDATE SET hero_password=$3, bearer_token=$4", int(user_id), email, enc_pass, token)
 
-async def edit_hero_account(user_id, acc_id, new_email, new_pass, proxy_url=None):
+async def edit_hero_account(user_id, acc_id, new_email, new_pass):
     enc_pass = encrypt_pass(new_pass)
-    enc_proxy = encrypt_pass(proxy_url) if proxy_url else None
     async with pool.acquire() as conn:
-        res = await conn.execute("UPDATE hero_accounts SET email=$1, hero_password=$2, proxy_url=$3 WHERE id=$4 AND user_id=$5", new_email, enc_pass, enc_proxy, int(acc_id), int(user_id))
+        res = await conn.execute("UPDATE hero_accounts SET email=$1, hero_password=$2 WHERE id=$3 AND user_id=$4", new_email, enc_pass, int(acc_id), int(user_id))
         return res == "UPDATE 1"
+
+async def update_bearer_token(email, token):
+    async with pool.acquire() as conn:
+        await conn.execute("UPDATE hero_accounts SET bearer_token=$1 WHERE email=$2", token, email)
+
+async def get_all_hero_accounts_raw():
+    """Barcha foydalanuvchilarning barcha Hero akkauntlari (parol hal qilingan holda) — fondagi token-tiklash tsikli uchun."""
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("SELECT id, email, hero_password, bearer_token FROM hero_accounts")
+    res = []
+    for r in rows:
+        d = dict(r)
+        d['hero_password'] = decrypt_pass(d['hero_password'])
+        res.append(d)
+    return res
 
 async def delete_hero_account(user_id, account_id):
     async with pool.acquire() as conn:
@@ -165,7 +178,7 @@ async def save_detailed_scan(user_id, success, total, duration, details):
 
 async def get_hero_accounts(user_id):
     async with pool.acquire() as conn:
-        return await conn.fetch("SELECT id, email, hero_password, bearer_token, proxy_url FROM hero_accounts WHERE user_id=$1 ORDER BY id DESC", int(user_id))
+        return await conn.fetch("SELECT id, email, hero_password, bearer_token FROM hero_accounts WHERE user_id=$1 ORDER BY id DESC", int(user_id))
 
 async def get_active_tokens(user_id):
     async with pool.acquire() as conn:
@@ -174,7 +187,6 @@ async def get_active_tokens(user_id):
         for r in rows:
             d = dict(r)
             d['hero_password'] = decrypt_pass(d['hero_password'])
-            if d.get('proxy_url'): d['proxy_url'] = decrypt_pass(d['proxy_url'])
             res.append(d)
         return res
 

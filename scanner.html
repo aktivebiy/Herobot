@@ -84,7 +84,6 @@
     <input type="hidden" id="editId">
     <input type="text" id="editEmail" class="inp" placeholder="Yangi Email (@newuu.uz)">
     <input type="password" id="editPass" class="inp" placeholder="Yangi Parol">
-    <input type="text" id="editProxy" class="inp" placeholder="Proxy (ixtiyoriy): http://user:pass@ip:port">
     <div style="display:flex; gap:10px; margin-top:4px;">
       <button class="btn btn-secondary" onclick="document.getElementById('editModal').style.display='none'">Bekor</button>
       <button class="btn btn-primary" onclick="saveEdit()">Saqlash</button>
@@ -134,7 +133,6 @@
     <div style="font-size:12px; color:var(--ink-lt); margin-bottom:16px;">Faqat @newuu.uz domeni. Parolingiz shifrlab saqlanadi.</div>
     <input type="text" id="newEmail" class="inp" placeholder="Email (@newuu.uz)">
     <input type="password" id="newPass" class="inp" placeholder="Hero Paroli">
-    <input type="text" id="newProxy" class="inp" placeholder="Proxy (ixtiyoriy): http://user:pass@ip:port">
     <button class="btn btn-secondary" onclick="addAccount()">+ Qo'shish va Tekshirish</button>
   </div>
 
@@ -310,13 +308,13 @@
 
   function doLogout() { if(confirm("Chiqishni tasdiqlaysizmi?")) { localStorage.clear(); switchTab('loginScreen'); } }
 
-  function openEdit(id, email) { document.getElementById('editId').value=id; document.getElementById('editEmail').value=email; document.getElementById('editPass').value=''; document.getElementById('editProxy').value=''; document.getElementById('editModal').style.display='flex'; }
+  function openEdit(id, email) { document.getElementById('editId').value=id; document.getElementById('editEmail').value=email; document.getElementById('editPass').value=''; document.getElementById('editModal').style.display='flex'; }
   
   async function saveEdit() {
-    const id=document.getElementById('editId').value, e=document.getElementById('editEmail').value.trim(), p=document.getElementById('editPass').value.trim(), proxy=document.getElementById('editProxy').value.trim();
+    const id=document.getElementById('editId').value, e=document.getElementById('editEmail').value.trim(), p=document.getElementById('editPass').value.trim();
     if(!e.endsWith('@newuu.uz')) return showNotify("Faqat @newuu.uz", false);
     showNotify("Tekshirilmoqda...", true);
-    const r = await (await fetch('/api/users/edit', { method:'POST', headers: getHeaders(), body: JSON.stringify({account_id:id, email:e, password:p, proxy:proxy}) })).json();
+    const r = await (await fetch('/api/users/edit', { method:'POST', headers: getHeaders(), body: JSON.stringify({account_id:id, email:e, password:p}) })).json();
     showNotify(r.message || "Xato", r.status==='success');
     if (r.status==='success') { document.getElementById('editModal').style.display='none'; loadData(); }
   }
@@ -336,7 +334,7 @@
         document.getElementById('accountList').innerHTML = data.users.length ? data.users.map(u => {
           const isAct = u.bearer_token && u.bearer_token!=='NO_TOKEN' && !u.bearer_token.startsWith('ERROR');
           return `<div class="acc-item ${isAct?'active-acc':'error-acc'}">
-            <div class="acc-top"><span class="acc-email">${esc(u.email)}</span><span class="badge ${isAct?'badge-green':'badge-red'}">${isAct?'Aktiv':'Nofaol'}</span>${u.has_proxy?' <span class="badge badge-green" title="Bu akkaunt alohida IP orqali ishlaydi">🌐 IP</span>':''}</div>
+            <div class="acc-top"><span class="acc-email">${esc(u.email)}</span><span class="badge ${isAct?'badge-green':'badge-red'}">${isAct?'Aktiv':'Nofaol'}</span></div>
             <div class="acc-bottom"><span style="font-size:12px;color:var(--ink-lt)">${isAct?'Parol shifrlangan':'Yangilash tugmasini bosing'}</span>
               <div class="action-group">
                 ${!isAct ? `<button class="act-btn reload" onclick="reloadToken(${u.id})">🔄</button>` : ''}
@@ -351,12 +349,12 @@
   }
 
   async function addAccount() {
-    const e = document.getElementById('newEmail').value.trim(), p = document.getElementById('newPass').value.trim(), proxy = document.getElementById('newProxy').value.trim();
+    const e = document.getElementById('newEmail').value.trim(), p = document.getElementById('newPass').value.trim();
     if(!e || !p) return showNotify("To'ldiring", false);
     showNotify("Kutilmoqda...", true);
-    const res = await (await fetch('/api/users/add', { method:'POST', headers: getHeaders(), body: JSON.stringify({email:e, password:p, proxy:proxy}) })).json();
+    const res = await (await fetch('/api/users/add', { method:'POST', headers: getHeaders(), body: JSON.stringify({email:e, password:p}) })).json();
     showNotify(res.message, res.status==='success');
-    if (res.status==='success') { document.getElementById('newEmail').value=''; document.getElementById('newPass').value=''; document.getElementById('newProxy').value=''; loadData(); }
+    if (res.status==='success') { document.getElementById('newEmail').value=''; document.getElementById('newPass').value=''; loadData(); }
   }
 
   async function delAcc(id) {
