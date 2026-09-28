@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 import aiohttp
 from aiohttp import web
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton, Message, Update, BufferedInputFile, CallbackQuery, BotCommand, BotCommandScopeChat
+from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton, Message, Update, BufferedInputFile, CallbackQuery, BotCommand, BotCommandScopeChat, ReplyKeyboardRemove
 from aiogram.filters import Command, CommandObject
 from aiogram.exceptions import TelegramForbiddenError, TelegramBadRequest, TelegramRetryAfter
 from datetime import datetime, timedelta
@@ -60,13 +60,29 @@ def get_safe_headers():
     }
 
 # JWT Token tekshiruvchisi
+ADMIN_USER_IDS = set()   # adminlarning app_users.id lari (panel uchun)
+ADMIN_TG_IDS = set()     # adminlarning Telegram ID lari (bot buyruqlari uchun)
+_admins_loaded = False
+
+async def refresh_admins():
+    """Adminlar ro'yxatini bazadan qayta o'qiydi. Bosh admin (ADMIN_ID) doim ro'yxatda."""
+    global ADMIN_USER_IDS, ADMIN_TG_IDS, _admins_loaded
+    rows = await db.get_admin_rows(ADMIN_ID)
+    ADMIN_USER_IDS = {r["id"] for r in rows}
+    ADMIN_TG_IDS = {r["telegram_id"] for r in rows} | ({ADMIN_ID} if ADMIN_ID else set())
+    _admins_loaded = True
+    logger.info(f"👑 Adminlar: {len(ADMIN_TG_IDS)} ta")
+
 def verify_token(request):
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "): return None, None
     token = auth_header.split(" ")[1]
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
-        return payload.get("user_id"), payload.get("role")
+        u_id = payload.get("user_id")
+        # Rolni tokendan emas, JORIY adminlar ro'yxatidan olamiz: admin huquqi olib tashlansa, eski token ham darhol kuchini yo'qotadi.
+        role = ("super_admin" if u_id in ADMIN_USER_IDS else "user") if _admins_loaded else payload.get("role")
+        return u_id, role
     except: return None, None
 
 async def verify_hero_account(email, password):
@@ -226,10 +242,10 @@ async def auth_login(request):
     except Exception as e: return web.json_response({"status": "error", "message": str(e)}, status=400)
 
 async def get_users_list(request):
-    u_id, _ = verify_token(request)
+    u_id, role = verify_token(request)
     if not u_id: return web.json_response({"status": "error"}, status=401)
     users = await db.get_hero_accounts(u_id)
-    return web.json_response({"status": "success", "users": [{"id":u["id"], "email":u["email"], "bearer_token":u["bearer_token"]} for u in users]}) # Parol yuborilmaydi!
+    return web.json_response({"status": "success", "role": role, "users": [{"id":u["id"], "email":u["email"], "bearer_token":u["bearer_token"]} for u in users]}) # Parol yuborilmaydi!
 
 async def add_user(request):
     u_id, _ = verify_token(request)
@@ -345,7 +361,9 @@ async def submit_feedback(request):
 async def get_admin_all_data(request):
     u_id, role = verify_token(request)
     if role != "super_admin": return web.json_response({"status": "error"}, status=403)
-    return web.json_response({"status": "success", "data": await db.get_super_admin_data(u_id)})
+    data = await db.get_super_admin_data(u_id)
+    data["admin_ids"] = sorted(ADMIN_USER_IDS)
+    return web.json_response({"status": "success", "data": data})
 
 async def admin_set_shadow(request):
     u_id, role = verify_token(request)
@@ -368,16 +386,7 @@ async def admin_backup(request):
     chat_id = await db.get_telegram_id(u_id) or ADMIN_ID
     if not chat_id: return web.json_response({"status": "error", "message": "Telegram ID topilmadi"})
     try:
-        import backup
-        data = await db.get_full_backup_data()
-        xlsx_bytes, json_bytes, st, now_local = await asyncio.to_thread(backup.build_files, data)
-        base = f"HeroScanner_Zaxira_{now_local:%Y-%m-%d_%H-%M}"
-        await bot.send_document(chat_id, BufferedInputFile(xlsx_bytes, filename=f"{base}.xlsx"), parse_mode="HTML",
-            caption=(f"📊 <b>HeroScanner — to'liq zaxira (Excel)</b>\n🗓 {now_local:%d.%m.%Y %H:%M} (Toshkent vaqti)\n\n"
-                     f"👥 Foydalanuvchilar: {st['users']}\n🔑 Noyob Hero akkauntlar: {st['unique_accounts']}\n"
-                     f"📦 Arxiv: {st['archived']}\n⏱ Skanerlar: {st['scans']}"))
-        await bot.send_document(chat_id, BufferedInputFile(json_bytes, filename=f"{base}.json"),
-            caption="🗄 Bazani to'liq tiklash uchun JSON nusxa.\n⚠️ Ichida parollar bor — hech kimga bermang.")
+        await send_backup(chat_id)
         return web.json_response({"status": "success", "message": "Zaxira Telegram chatingizga yuborildi ✅"})
     except Exception as e:
         logger.error(f"Zaxira xatosi: {e}")
@@ -405,13 +414,13 @@ async def share_connections(request):
 # Webhook handler
 # --- ADMIN: FOYDALANUVCHILARGA XABAR YUBORISH ---
 MAX_MSG_LEN = 3900  # Telegram limiti 4096 belgi; sarlavha uchun zaxira
-DM_HEADER = "💬 <b>Admin xabari</b>"
 BC_HEADER = "📢 <b>HeroScanner xabari</b>"
 _pending_broadcasts = {}   # token -> matn (admin tasdiqlashini kutayotganlar)
 _bg_tasks = set()
-_FEEDBACK_ID = re.compile(r"^Mualif: .* \(ID: (\d+)\)$", re.M)
+_REPLY_ID = re.compile(r"^(?:Mualif|Kimdan): .* \(ID: (\d+)\)$", re.M)
 
-def _is_admin(user_id): return bool(ADMIN_ID) and user_id == ADMIN_ID
+def _is_owner(user_id): return bool(ADMIN_ID) and user_id == ADMIN_ID          # bosh admin (ADMIN_ID egasi)
+def _is_admin(user_id): return _is_owner(user_id) or user_id in ADMIN_TG_IDS
 def _who(u): return f"@{u['username']}" if u.get("username") else (u.get("full_name") or str(u["telegram_id"]))
 
 async def _send_html(chat_id, body):
@@ -437,7 +446,7 @@ async def cmd_send(m: Message, command: CommandObject):
     if len(text) > MAX_MSG_LEN: return await m.answer(f"❌ Xabar juda uzun (maksimum {MAX_MSG_LEN} belgi).")
     u = await db.find_user_for_message(target)
     if not u: return await m.answer("❌ Foydalanuvchi topilmadi. @username, Telegram ID yoki hero_... login yozing.")
-    ok = await _send_html(u["telegram_id"], f"{DM_HEADER}\n\n{_html.escape(text, quote=False)}")
+    ok = await _send_html(u["telegram_id"], _html.escape(text, quote=False))
     await m.answer(f"✅ Yuborildi: {_who(u)}" if ok else f"❌ Yuborib bo'lmadi: {_who(u)} (botni bloklagan bo'lishi mumkin)")
 
 async def cmd_broadcast(m: Message, command: CommandObject):
@@ -486,16 +495,168 @@ async def cb_broadcast(c: CallbackQuery):
     _bg_tasks.add(t); t.add_done_callback(_bg_tasks.discard)
 
 async def admin_reply_feedback(m: Message):
-    """Admin feedback xabariga reply qilib yozsa — javob o'sha feedback muallifiga ketadi."""
-    if not _is_admin(m.from_user.id): return
+    """Admin feedback yoki foydalanuvchi xabariga reply qilib yozsa — javob o'sha odamga ketadi (sarlavhasiz, oddiy matn)."""
+    if not _is_admin(m.from_user.id): return await relay_to_admin(m)   # oddiy foydalanuvchining reply'i ham adminga yetkazilsin
     src = m.reply_to_message
-    if not src or not src.from_user or not src.from_user.is_bot or not src.text or "Yangi Feedback" not in src.text: return
-    mt = _FEEDBACK_ID.search(src.text)   # birinchi "Mualif:" qatoridagi OXIRGI (ID: ...) — ism ichiga soxta ID yozib bo'lmaydi
+    src_text = (src.text or src.caption or "") if src else ""
+    if not src or not src.from_user or not src.from_user.is_bot or not ("Yangi Feedback" in src_text or "Yangi xabar" in src_text): return
+    mt = _REPLY_ID.search(src_text)   # birinchi "Mualif:/Kimdan:" qatoridagi OXIRGI (ID: ...) — ism ichiga soxta ID yozib bo'lmaydi
     text = (m.text or "").strip()
     if not mt or not text: return
     if len(text) > MAX_MSG_LEN: return await m.answer(f"❌ Xabar juda uzun (maksimum {MAX_MSG_LEN} belgi).")
-    ok = await _send_html(int(mt.group(1)), f"{DM_HEADER}\n\n{_html.escape(text, quote=False)}")
+    ok = await _send_html(int(mt.group(1)), _html.escape(text, quote=False))
     await m.answer("✅ Javob yuborildi" if ok else "❌ Yuborib bo'lmadi (botni bloklagan bo'lishi mumkin)")
+
+ADMIN_COMMANDS = [BotCommand(command="send", description="Foydalanuvchiga xabar: /send @user matn"),
+                  BotCommand(command="broadcast", description="Hammaga xabar: /broadcast matn"),
+                  BotCommand(command="admins", description="Adminlar ro'yxati")]
+OWNER_COMMANDS = ADMIN_COMMANDS + [BotCommand(command="addadmin", description="Admin qo'shish: /addadmin @user"),
+                                   BotCommand(command="removeadmin", description="Adminni olib tashlash: /removeadmin @user")]
+
+async def _set_menu(chat_id, commands):
+    try: await bot.set_my_commands(commands, scope=BotCommandScopeChat(chat_id=chat_id))
+    except Exception as e: logger.warning(f"Buyruqlar menyusi o'rnatilmadi ({chat_id}): {e}")
+
+async def cmd_admins(m: Message):
+    if not _is_admin(m.from_user.id): return
+    rows = await db.get_admin_rows(ADMIN_ID)
+    lines = [f"• {_who(r)} — ID {r['telegram_id']}" + (" 👑 bosh admin" if r["telegram_id"] == ADMIN_ID else "") for r in rows]
+    if ADMIN_ID and not any(r["telegram_id"] == ADMIN_ID for r in rows): lines.insert(0, f"• Bosh admin — ID {ADMIN_ID} 👑")
+    await m.answer(f"👑 <b>Adminlar ({len(lines)} ta):</b>\n" + _html.escape("\n".join(lines), quote=False), parse_mode="HTML")
+
+_ADD_HELP = ("👑 <b>Admin qo'shish:</b>\n<code>/addadmin @username</code>\n<code>/addadmin 123456789</code> (Telegram ID)\n\n"
+             "<b>Olib tashlash:</b>\n<code>/removeadmin @username</code>\n\nFoydalanuvchi avval botga /start yuborgan bo'lishi kerak.")
+
+async def cmd_addadmin(m: Message, command: CommandObject):
+    if not _is_owner(m.from_user.id): return   # faqat bosh admin: oddiy admin boshqa admin qo'sha olmaydi
+    args = (command.args or "").split()
+    if not args: return await m.answer(_ADD_HELP, parse_mode="HTML")
+    u = await db.find_user_for_message(args[0])
+    if not u: return await m.answer("❌ Foydalanuvchi topilmadi. U avval botga /start yuborishi kerak.")
+    if u["telegram_id"] == ADMIN_ID: return await m.answer("ℹ️ Bu siz — bosh adminsiz.")
+    if u["telegram_id"] in ADMIN_TG_IDS: return await m.answer(f"ℹ️ {_who(u)} allaqachon admin.")
+    if not await db.set_admin(u["telegram_id"], True): return await m.answer("❌ Saqlab bo'lmadi.")
+    await refresh_admins()
+    await _set_menu(u["telegram_id"], ADMIN_COMMANDS)
+    await _send_html(u["telegram_id"], "👑 <b>Sizga admin huquqi berildi!</b>\n\nMini ilovani yopib qayta oching — <b>⚡ Admin</b> tugmasi chiqadi.\nBot buyruqlari: /send, /broadcast, /admins")
+    await m.answer(f"✅ {_who(u)} admin qilindi.")
+
+async def cmd_removeadmin(m: Message, command: CommandObject):
+    if not _is_owner(m.from_user.id): return
+    args = (command.args or "").split()
+    if not args: return await m.answer(_ADD_HELP, parse_mode="HTML")
+    u = await db.find_user_for_message(args[0])
+    if not u: return await m.answer("❌ Foydalanuvchi topilmadi.")
+    if u["telegram_id"] == ADMIN_ID: return await m.answer("❌ Bosh adminni olib tashlab bo'lmaydi.")
+    if u["telegram_id"] not in ADMIN_TG_IDS: return await m.answer(f"ℹ️ {_who(u)} admin emas.")
+    if not await db.set_admin(u["telegram_id"], False): return await m.answer("❌ Saqlab bo'lmadi.")
+    await refresh_admins()
+    try: await bot.delete_my_commands(scope=BotCommandScopeChat(chat_id=u["telegram_id"]))
+    except Exception: pass
+    await m.answer(f"✅ {_who(u)} endi admin emas.")
+
+# --- KUNLIK AVTO-ZAXIRA ---
+try: BACKUP_HOUR = min(23, max(0, int(os.getenv("BACKUP_HOUR", "3"))))   # Toshkent vaqti bilan soat (standart: 03:00)
+except ValueError: BACKUP_HOUR = 3
+_backup_fails = {}   # sana -> muvaffaqiyatsiz urinishlar soni
+
+async def send_backup(chat_id, auto=False):
+    """To'liq zaxirani (Excel + JSON) Telegram chatga fayl qilib yuboradi. auto=True — ovozsiz (jimgina) va 'Kunlik' sarlavhasi bilan."""
+    import backup
+    data = await db.get_full_backup_data()
+    xlsx_bytes, json_bytes, st, now_local = await asyncio.to_thread(backup.build_files, data)
+    base = f"HeroScanner_Zaxira_{now_local:%Y-%m-%d_%H-%M}"
+    title = "🗓 <b>Kunlik avto-zaxira</b>" if auto else "📊 <b>HeroScanner — to'liq zaxira (Excel)</b>"
+    await bot.send_document(chat_id, BufferedInputFile(xlsx_bytes, filename=f"{base}.xlsx"), parse_mode="HTML", disable_notification=auto,
+        caption=(f"{title}\n🕒 {now_local:%d.%m.%Y %H:%M} (Toshkent vaqti)\n\n"
+                 f"👥 Foydalanuvchilar: {st['users']}\n🔑 Noyob Hero akkauntlar: {st['unique_accounts']}\n"
+                 f"📦 Arxiv: {st['archived']}\n⏱ Skanerlar: {st['scans']}"))
+    await bot.send_document(chat_id, BufferedInputFile(json_bytes, filename=f"{base}.json"), disable_notification=auto,
+        caption="🗄 Bazani to'liq tiklash uchun JSON nusxa.\n⚠️ Ichida parollar bor — hech kimga bermang.")
+    return st
+
+async def daily_backup_tick():
+    """Bitta tekshiruv: belgilangan soat kelgan va bugungi zaxira hali yuborilmagan bo'lsa — bosh adminga jimgina yuboradi.
+    Sana bazada saqlanadi, shuning uchun qayta deploy/restart bo'lsa ham bir kunda ikki marta ketmaydi;
+    server o'sha soatda o'chiq bo'lgan bo'lsa, yoqilishi bilan kechiktirib yuboradi."""
+    if not bot or not ADMIN_ID: return False
+    import backup
+    now_local = backup.utc_now() + timedelta(hours=5)   # Toshkent vaqti
+    today = now_local.strftime("%Y-%m-%d")
+    if now_local.hour < BACKUP_HOUR or _backup_fails.get(today, 0) >= 3: return False
+    if await db.get_setting("last_auto_backup") == today: return False
+    try:
+        st = await send_backup(ADMIN_ID, auto=True)
+    except Exception as e:
+        _backup_fails[today] = _backup_fails.get(today, 0) + 1
+        logger.error(f"Avto-zaxira xatosi ({_backup_fails[today]}/3): {e}")
+        return False
+    await db.set_setting("last_auto_backup", today)
+    logger.info(f"💾 Kunlik avto-zaxira yuborildi: {st['users']} foydalanuvchi, {st['unique_accounts']} noyob akkaunt")
+    return True
+
+async def daily_backup_loop():
+    await asyncio.sleep(180)   # ishga tushgach biroz kutamiz
+    while True:
+        try: await daily_backup_tick()
+        except Exception as e: logger.error(f"Avto-zaxira tsikli xatosi: {e}")
+        await asyncio.sleep(600)   # har 10 daqiqada tekshiradi
+
+# --- FOYDALANUVCHI XABARINI ADMINGA YETKAZISH ---
+_relay_times = {}   # user_id -> oxirgi xabar vaqtlari (spamdan himoya)
+_TYPE_UZ = {"photo": "rasm", "video": "video", "voice": "ovozli xabar", "audio": "audio", "document": "fayl", "sticker": "stiker",
+            "video_note": "video xabar", "animation": "GIF", "contact": "kontakt", "location": "joylashuv", "poll": "so'rovnoma"}
+
+def _sender_label(u):
+    name = " ".join(x for x in (u.first_name, u.last_name) if x)
+    if u.username: return f"{name} (@{u.username})" if name else f"@{u.username}"
+    return name or str(u.id)
+
+async def relay_to_admin(m: Message):
+    """Foydalanuvchi botga yozgan xabarni (kimdan + nima deb yozgani) bosh adminga yetkazadi.
+    Admin o'sha xabarga reply qilsa, javob shu foydalanuvchiga ketadi."""
+    if not ADMIN_ID or not m.from_user or m.from_user.is_bot or _is_admin(m.from_user.id): return
+    now = time.time()
+    recent = [t for t in _relay_times.get(m.from_user.id, []) if now - t < 60]
+    if len(recent) >= 8: return   # spamdan himoya: bir foydalanuvchidan daqiqasiga 8 tadan ortig'i o'tkazilmaydi
+    recent.append(now); _relay_times[m.from_user.id] = recent
+    text = m.text or m.caption or ""
+    if len(text) > 3500: text = text[:3500] + "…"
+    if m.text: content = text
+    else:
+        kind = str(m.content_type.value)
+        content = f"[{_TYPE_UZ.get(kind, kind)}]" + (f" {text}" if text else "")
+    await _send_html(ADMIN_ID, f"📨 <b>Yangi xabar</b>\n\nKimdan: {_html.escape(_sender_label(m.from_user), quote=False)} (ID: {m.from_user.id})\nXabar: {_html.escape(content, quote=False)}")
+    if not m.text:   # rasm/ovoz/fayl va h.k. — o'zini ham ko'rsatamiz
+        try: await bot.copy_message(ADMIN_ID, m.chat.id, m.message_id)
+        except Exception as e: logger.warning(f"Media nusxalanmadi: {e}")
+
+# --- BIR MARTALIK TOZALASH: avval yuborilgan '📞 Raqamimni ulashish' tugmasini foydalanuvchilar chatidan olib tashlash ---
+async def _drop_reply_keyboard(chat_id):
+    """Telegram'da chatdagi klaviaturani faqat yangi xabar orqali olib tashlash mumkin: jimgina yuboramiz va darhol o'chiramiz."""
+    for _ in range(2):
+        try:
+            msg = await bot.send_message(chat_id, "✅", reply_markup=ReplyKeyboardRemove(), disable_notification=True)
+            try: await bot.delete_message(chat_id, msg.message_id)
+            except Exception: pass
+            return True
+        except TelegramRetryAfter as e: await asyncio.sleep(e.retry_after + 1)
+        except Exception: return False
+    return False
+
+async def remove_phone_keyboards():
+    await asyncio.sleep(30)
+    try:
+        if not bot or await db.get_setting("phone_kb_removed"): return
+        users = await db.get_users_for_sync()
+        done = 0
+        for u in users:
+            if await _drop_reply_keyboard(u["telegram_id"]): done += 1
+            await asyncio.sleep(0.05)
+        if done or not users: await db.set_setting("phone_kb_removed", "1")
+        logger.info(f"🧹 '📞 Raqamimni ulashish' tugmasi chatlardan olib tashlandi: {done}/{len(users)}")
+    except Exception as e:
+        logger.error(f"Tugmani tozalashda xato: {e}")
 
 async def handle_webhook(request):
     if bot: await dp.feed_update(bot, Update(**await request.json()))
@@ -523,8 +684,12 @@ async def main():
     runner = web.AppRunner(app); await runner.setup()
     await web.TCPSite(runner, "0.0.0.0", PORT).start(); logger.info("✅ Veb-server ishga tushdi")
     await db.init_db()
+    try: await refresh_admins()
+    except Exception as e: logger.error(f"Adminlarni yuklashda xato: {e}")
     asyncio.create_task(token_healer_loop())
     asyncio.create_task(username_sync_loop())
+    asyncio.create_task(daily_backup_loop())
+    asyncio.create_task(remove_phone_keyboards())
 
     if bot and WEBAPP_URL:
         await bot.set_webhook(f"{WEBAPP_URL}/webhook/{BOT_TOKEN}")
@@ -546,14 +711,15 @@ async def main():
         # Admin: foydalanuvchilarga xabar yuborish (faqat ADMIN_ID ishlata oladi)
         dp.message.register(cmd_send, Command("send"))
         dp.message.register(cmd_broadcast, Command("broadcast"))
+        dp.message.register(cmd_admins, Command("admins"))
+        dp.message.register(cmd_addadmin, Command("addadmin"))
+        dp.message.register(cmd_removeadmin, Command("removeadmin"))
         dp.callback_query.register(cb_broadcast, F.data.startswith("bc_"))
         dp.message.register(admin_reply_feedback, F.reply_to_message, F.text, ~F.text.startswith("/"))
-        if ADMIN_ID:
-            try:  # "/" menyusida faqat adminga ko'rinadi
-                await bot.set_my_commands([BotCommand(command="send", description="Foydalanuvchiga xabar: /send @user matn"),
-                                           BotCommand(command="broadcast", description="Hammaga xabar: /broadcast matn")],
-                                          scope=BotCommandScopeChat(chat_id=ADMIN_ID))
-            except Exception as e: logger.warning(f"Admin buyruqlar menyusi o'rnatilmadi: {e}")
+        dp.message.register(relay_to_admin, F.chat.type == "private")   # eng oxirida: boshqa hech kim olmagan xabarlar
+        if ADMIN_ID:  # "/" menyusida buyruqlar faqat adminlarga ko'rinadi
+            await _set_menu(ADMIN_ID, OWNER_COMMANDS)
+            for tid in ADMIN_TG_IDS - {ADMIN_ID}: await _set_menu(tid, ADMIN_COMMANDS)
     while True: await asyncio.sleep(3600)
 
 if __name__ == "__main__":

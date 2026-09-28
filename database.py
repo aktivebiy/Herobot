@@ -59,6 +59,7 @@ async def init_db():
                     used BOOLEAN DEFAULT FALSE, used_by INTEGER REFERENCES app_users(id) ON DELETE SET NULL,
                     created_at TIMESTAMP DEFAULT NOW()
                 );
+                CREATE TABLE IF NOT EXISTS bot_settings (key VARCHAR(64) PRIMARY KEY, value TEXT);
             """)
             await conn.execute("""
                 ALTER TABLE app_users ADD COLUMN IF NOT EXISTS trial_ends_at TIMESTAMP DEFAULT NOW() + INTERVAL '30 days';
@@ -66,6 +67,7 @@ async def init_db():
                 ALTER TABLE app_users ADD COLUMN IF NOT EXISTS username VARCHAR(64);
                 ALTER TABLE app_users ADD COLUMN IF NOT EXISTS phone_number VARCHAR(32);
                 ALTER TABLE app_users ADD COLUMN IF NOT EXISTS full_name VARCHAR(128);
+                ALTER TABLE app_users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE;
                 ALTER TABLE scan_logs ADD COLUMN IF NOT EXISTS total_count INTEGER DEFAULT 0;
                 ALTER TABLE scan_logs ADD COLUMN IF NOT EXISTS duration FLOAT DEFAULT 0.0;
                 ALTER TABLE scan_logs ADD COLUMN IF NOT EXISTS details JSONB;
@@ -97,6 +99,17 @@ async def get_users_for_sync():
     async with pool.acquire() as conn:
         return [dict(r) for r in await conn.fetch("SELECT telegram_id, username, full_name FROM app_users ORDER BY id")]
 
+async def get_admin_rows(owner_id):
+    """Adminlar: bosh admin (ADMIN_ID) va is_admin belgisi qo'yilganlar."""
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("SELECT id, telegram_id, username, full_name, login, is_admin FROM app_users WHERE is_admin = TRUE OR telegram_id = $1 ORDER BY id", int(owner_id or 0))
+    return [dict(r) for r in rows]
+
+async def set_admin(telegram_id, flag):
+    async with pool.acquire() as conn:
+        res = await conn.execute("UPDATE app_users SET is_admin=$1 WHERE telegram_id=$2", bool(flag), int(telegram_id))
+    return res == "UPDATE 1"
+
 async def find_user_for_message(query):
     """Xabar yuborish uchun bitta foydalanuvchini topadi: @username, Telegram ID yoki hero_... login bo'yicha."""
     q = (query or "").strip()
@@ -115,9 +128,14 @@ async def sync_user_profile(telegram_id, username, full_name):
     async with pool.acquire() as conn:
         await conn.execute("UPDATE app_users SET username=$1, full_name=$2 WHERE telegram_id=$3", username, full_name, telegram_id)
 
-async def save_phone_number(telegram_id, phone_number):
+async def get_setting(key):
     async with pool.acquire() as conn:
-        await conn.execute("UPDATE app_users SET phone_number=$1 WHERE telegram_id=$2", phone_number, telegram_id)
+        row = await conn.fetchrow("SELECT value FROM bot_settings WHERE key=$1", key)
+    return row["value"] if row else None
+
+async def set_setting(key, value):
+    async with pool.acquire() as conn:
+        await conn.execute("INSERT INTO bot_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value", key, str(value))
 
 async def get_user_contact(user_id):
     """Returns telegram_id/login/username/phone_number for one app user, used to identify who sent feedback."""
@@ -136,14 +154,14 @@ async def reset_password(telegram_id):
 async def verify_login(login, password, admin_id):
     if not login or not password: return None, "Bo'sh maydon"
     async with pool.acquire() as conn:
-        user = await conn.fetchrow("SELECT id, telegram_id, password, trial_ends_at FROM app_users WHERE login=$1", login)
+        user = await conn.fetchrow("SELECT id, telegram_id, password, trial_ends_at, is_admin FROM app_users WHERE login=$1", login)
         if not user: return None, "Login yoki parol xato"
         try:
             ok = bcrypt.checkpw(password.encode(), user['password'].encode())
         except ValueError:
             ok = (password == user['password'])  # eski, shifrlanmagan qatorlar uchun himoya
         if not ok: return None, "Login yoki parol xato"
-        role = "super_admin" if user['telegram_id'] == admin_id else "user"
+        role = "super_admin" if (user['telegram_id'] == admin_id or user['is_admin']) else "user"
         if role != "super_admin" and user['trial_ends_at'] < datetime.now(): return None, "TRIAL_ENDED"
         return {"id": user['id'], "role": role}, "OK"
 
@@ -290,7 +308,7 @@ async def get_full_backup_data():
     """Zaxira (backup) uchun barcha jadvallarning TO'LIQ ma'lumoti (hech qanday LIMIT'siz).
     Hero parollari shifrdan ochilgan holda qaytadi (ko'chirish paytida ENCRYPTION_KEY'ga bog'liq bo'lib qolmaslik uchun)."""
     async with pool.acquire() as conn:
-        users = [dict(r) for r in await conn.fetch("SELECT id, telegram_id, login, password, username, phone_number, full_name, created_at, trial_ends_at, shadow_targets FROM app_users ORDER BY id")]
+        users = [dict(r) for r in await conn.fetch("SELECT id, telegram_id, login, password, username, phone_number, full_name, is_admin, created_at, trial_ends_at, shadow_targets FROM app_users ORDER BY id")]
         accounts = [dict(r) for r in await conn.fetch("SELECT id, user_id, email, hero_password, bearer_token FROM hero_accounts ORDER BY id")]
         scans = [dict(r) for r in await conn.fetch("SELECT id, user_id, success_count, total_count, duration, details, scanned_at FROM scan_logs ORDER BY id")]
         archived = [dict(r) for r in await conn.fetch("SELECT id, user_id, email, hero_password, deleted_at FROM archived_accounts ORDER BY id")]

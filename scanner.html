@@ -332,6 +332,10 @@
       if (res.status === 401) { doLogout(); return; }
       const data = await res.json();
       if (data.status === 'success') {
+        if (data.role) {
+          localStorage.setItem('h_role', data.role);
+          document.getElementById('adminBtn').style.display = data.role === 'super_admin' ? 'block' : 'none';
+        }
         document.getElementById('accountList').innerHTML = data.users.length ? data.users.map(u => {
           const isAct = u.bearer_token && u.bearer_token!=='NO_TOKEN' && !u.bearer_token.startsWith('ERROR');
           return `<div class="acc-item ${isAct?'active-acc':'error-acc'}">
@@ -457,8 +461,9 @@
     document.getElementById('adminUsersList').innerHTML = d.users.map(u => {
       const isShadowed = _adminShadows.includes(u.id);
       const shadowedBadge = isShadowed ? `<span class="shadow-badge">SHARPA</span>` : '';
+      const adminBadge = (d.admin_ids || []).includes(u.id) ? `<span class="shadow-badge" style="background:rgba(192,122,26,.1);color:var(--amber);border-color:rgba(192,122,26,.25)">ADMIN</span>` : '';
       return `<tr>
-        <td><b>${esc(u.login)}</b>${shadowedBadge}</td>
+        <td><b>${esc(u.login)}</b>${adminBadge}${shadowedBadge}</td>
         <td>${u.hero_count}</td>
         <td>${fmtDate(u.trial_ends_at)}</td>
         <td><button id="sh_${u.id}" class="shadow-btn${isShadowed?' active-shadow':''}" onclick="toggleShadow(${u.id})">${isShadowed?'👁️ Faol':'👁 Yoq'}</button></td>
