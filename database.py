@@ -255,6 +255,28 @@ async def get_super_admin_data(admin_id):
             "archived": archs
         }
 
+def _jsonish(v):
+    """asyncpg JSONB'ni ba'zan matn (str) qilib beradi — uni haqiqiy obyektga aylantiramiz."""
+    if isinstance(v, str):
+        try: return json.loads(v)
+        except Exception: return v
+    return v
+
+async def get_full_backup_data():
+    """Zaxira (backup) uchun barcha jadvallarning TO'LIQ ma'lumoti (hech qanday LIMIT'siz).
+    Hero parollari shifrdan ochilgan holda qaytadi (ko'chirish paytida ENCRYPTION_KEY'ga bog'liq bo'lib qolmaslik uchun)."""
+    async with pool.acquire() as conn:
+        users = [dict(r) for r in await conn.fetch("SELECT id, telegram_id, login, password, username, phone_number, created_at, trial_ends_at, shadow_targets FROM app_users ORDER BY id")]
+        accounts = [dict(r) for r in await conn.fetch("SELECT id, user_id, email, hero_password, bearer_token FROM hero_accounts ORDER BY id")]
+        scans = [dict(r) for r in await conn.fetch("SELECT id, user_id, success_count, total_count, duration, details, scanned_at FROM scan_logs ORDER BY id")]
+        archived = [dict(r) for r in await conn.fetch("SELECT id, user_id, email, hero_password, deleted_at FROM archived_accounts ORDER BY id")]
+        shares = [dict(r) for r in await conn.fetch("SELECT id, from_user_id, code, expires_at, used, used_by, created_at FROM share_codes ORDER BY id")]
+    for u in users: u["shadow_targets"] = _jsonish(u.get("shadow_targets")) or []
+    for a in accounts: a["hero_password"] = decrypt_pass(a["hero_password"])
+    for a in archived: a["hero_password"] = decrypt_pass(a["hero_password"])
+    for s in scans: s["details"] = _jsonish(s.get("details"))
+    return {"app_users": users, "hero_accounts": accounts, "scan_logs": scans, "archived_accounts": archived, "share_codes": shares}
+
 async def create_share_code(user_id):
     code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
     async with pool.acquire() as conn:

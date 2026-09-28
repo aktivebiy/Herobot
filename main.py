@@ -4,14 +4,12 @@ import logging
 import time
 import random
 import secrets
-import csv
 import jwt
-from io import StringIO
 from urllib.parse import urlparse
 import aiohttp
 from aiohttp import web
 from aiogram import Bot, Dispatcher
-from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton, Message, Update
+from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton, Message, Update, BufferedInputFile
 from aiogram.filters import Command
 from datetime import datetime, timedelta
 import database as db
@@ -302,19 +300,29 @@ async def admin_extend_trial(request):
     await db.extend_user_trial((await request.json()).get("target_id"))
     return web.json_response({"status": "success"})
 
-async def admin_export_csv(request):
+async def admin_backup(request):
+    """To'liq zaxira: chiroyli Excel + tiklash uchun JSON. Telegram Mini App ichida brauzer-yuklash (blob)
+    ishlamagani uchun fayllar bot orqali adminning Telegram chatiga yuboriladi."""
     u_id, role = verify_token(request)
-    if not u_id or role != "super_admin": return web.Response(status=403)
-
-    data = await db.get_super_admin_data(u_id)
-    output = StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["Foydalanuvchi", "Hero Email", "Hero Parol", "Holati", "O'chirilgan vaqti"])
-    
-    for acc in data.get('accounts', []): writer.writerow([acc.get('tg_login', ''), acc.get('email', ''), acc.get('hero_password', ''), "Aktiv", ""])
-    for arch in data.get('archived', []): writer.writerow([arch.get('tg_login', ''), arch.get('email', ''), arch.get('hero_password', ''), "O'chirilgan", arch.get('deleted_at', '')])
-        
-    return web.Response(text=output.getvalue(), content_type='text/csv', headers={"Content-Disposition": "attachment; filename=HeroScanner_Zaxira.csv"})
+    if not u_id or role != "super_admin": return web.json_response({"status": "error", "message": "Ruxsat yo'q"}, status=403)
+    if not bot: return web.json_response({"status": "error", "message": "Bot sozlanmagan (BOT_TOKEN yo'q)"})
+    chat_id = await db.get_telegram_id(u_id) or ADMIN_ID
+    if not chat_id: return web.json_response({"status": "error", "message": "Telegram ID topilmadi"})
+    try:
+        import backup
+        data = await db.get_full_backup_data()
+        xlsx_bytes, json_bytes, st, now_local = await asyncio.to_thread(backup.build_files, data)
+        base = f"HeroScanner_Zaxira_{now_local:%Y-%m-%d_%H-%M}"
+        await bot.send_document(chat_id, BufferedInputFile(xlsx_bytes, filename=f"{base}.xlsx"), parse_mode="HTML",
+            caption=(f"📊 <b>HeroScanner — to'liq zaxira (Excel)</b>\n🗓 {now_local:%d.%m.%Y %H:%M} (Toshkent vaqti)\n\n"
+                     f"👥 Foydalanuvchilar: {st['users']}\n🔑 Noyob Hero akkauntlar: {st['unique_accounts']}\n"
+                     f"📦 Arxiv: {st['archived']}\n⏱ Skanerlar: {st['scans']}"))
+        await bot.send_document(chat_id, BufferedInputFile(json_bytes, filename=f"{base}.json"),
+            caption="🗄 Bazani to'liq tiklash uchun JSON nusxa.\n⚠️ Ichida parollar bor — hech kimga bermang.")
+        return web.json_response({"status": "success", "message": "Zaxira Telegram chatingizga yuborildi ✅"})
+    except Exception as e:
+        logger.error(f"Zaxira xatosi: {e}")
+        return web.json_response({"status": "error", "message": "Zaxira yaratishda xatolik"})
 
 # Share routes
 async def share_generate(request):
@@ -352,7 +360,7 @@ async def main():
     app.router.add_post("/api/feedback", submit_feedback)
     
     app.router.add_post("/api/admin/set_shadow", admin_set_shadow); app.router.add_post("/api/admin/extend", admin_extend_trial)
-    app.router.add_get("/api/admin/export", admin_export_csv); app.router.add_get("/api/admin/all_data", get_admin_all_data)
+    app.router.add_post("/api/admin/backup", admin_backup); app.router.add_get("/api/admin/all_data", get_admin_all_data)
 
     app.router.add_post("/api/share/generate", share_generate); app.router.add_post("/api/share/import", share_import)
     app.router.add_get("/api/share/connections", share_connections)

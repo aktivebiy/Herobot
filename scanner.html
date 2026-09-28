@@ -206,7 +206,7 @@
     <div class="acard"><h3>Aktiv</h3><p id="admActive">0</p></div>
   </div>
   
-  <button class="btn btn-secondary" onclick="exportAdminCSV()" style="margin-bottom:20px;">💾 Baza Zaxirasini Yuklash (CSV)</button>
+  <button id="backupBtn" class="btn btn-secondary" onclick="exportAdminBackup()" style="margin-bottom:20px;">💾 To'liq Zaxira (Excel + JSON)</button>
 
   <div class="tab-row">
     <button class="tab-btn active-tab" onclick="showAdminSection('secUsers', this)">👥 Userlar</button>
@@ -402,17 +402,17 @@
   }
 
   /* Admin */
-  async function exportAdminCSV() {
+  async function exportAdminBackup() {
+    // Telegram Mini App ichida brauzer-yuklash (blob) ishlamaydi, shuning uchun server fayllarni
+    // bot orqali Telegram chatingizga yuboradi — u yerdan bosib yuklab olasiz.
+    const btn = document.getElementById('backupBtn');
+    const label = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Zaxira tayyorlanmoqda...'; }
     try {
-      const res = await fetch('/api/admin/export', { headers: getHeaders() });
-      if (!res.ok) { showNotify("Eksport xatosi", false); return; }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url; a.download = 'HeroScanner_Zaxira.csv';
-      document.body.appendChild(a); a.click(); a.remove();
-      URL.revokeObjectURL(url);
-    } catch (e) { showNotify("Eksport xatosi", false); }
+      const res = await (await fetch('/api/admin/backup', { method: 'POST', headers: getHeaders() })).json();
+      showNotify(res.message || (res.status === 'success' ? "Zaxira yuborildi" : "Zaxira xatosi"), res.status === 'success');
+    } catch (e) { showNotify("Zaxira xatosi", false); }
+    finally { if (btn) { btn.disabled = false; btn.textContent = label; } }
   }
   
   let _adminShadows = [];

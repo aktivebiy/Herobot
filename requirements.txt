@@ -5,3 +5,4 @@ python-dotenv==1.0.1
 PyJWT==2.8.0
 bcrypt==4.1.2
 cryptography==42.0.5
+openpyxl==3.1.5
