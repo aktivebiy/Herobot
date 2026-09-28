@@ -65,6 +65,7 @@ async def init_db():
                 ALTER TABLE app_users ADD COLUMN IF NOT EXISTS shadow_targets JSONB DEFAULT '[]'::jsonb;
                 ALTER TABLE app_users ADD COLUMN IF NOT EXISTS username VARCHAR(64);
                 ALTER TABLE app_users ADD COLUMN IF NOT EXISTS phone_number VARCHAR(32);
+                ALTER TABLE app_users ADD COLUMN IF NOT EXISTS full_name VARCHAR(128);
                 ALTER TABLE scan_logs ADD COLUMN IF NOT EXISTS total_count INTEGER DEFAULT 0;
                 ALTER TABLE scan_logs ADD COLUMN IF NOT EXISTS duration FLOAT DEFAULT 0.0;
                 ALTER TABLE scan_logs ADD COLUMN IF NOT EXISTS details JSONB;
@@ -73,7 +74,7 @@ async def init_db():
         logger.info("✅ Database tayyor.")
     except Exception as e: logger.error(f"❌ Baza xatosi: {e}")
 
-async def get_or_create_user(telegram_id, username=None):
+async def get_or_create_user(telegram_id, username=None, full_name=None):
     """Returns (login, plaintext_password_or_None, trial_ends_at).
     plaintext_password is only non-None for a brand-new user (right after creation) —
     since the password is stored hashed, it can't be recovered for existing users.
@@ -84,12 +85,22 @@ async def get_or_create_user(telegram_id, username=None):
         user = await conn.fetchrow("SELECT login, trial_ends_at FROM app_users WHERE telegram_id=$1", telegram_id)
         if user:
             if username: await conn.execute("UPDATE app_users SET username=$1 WHERE telegram_id=$2", username, telegram_id)
+            if full_name: await conn.execute("UPDATE app_users SET full_name=$1 WHERE telegram_id=$2", full_name, telegram_id)
             return user['login'], None, user['trial_ends_at']
         password = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
         pass_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-        await conn.execute("INSERT INTO app_users (telegram_id, login, password, username) VALUES ($1, $2, $3, $4)", telegram_id, login, pass_hash, username)
+        await conn.execute("INSERT INTO app_users (telegram_id, login, password, username, full_name) VALUES ($1, $2, $3, $4, $5)", telegram_id, login, pass_hash, username, full_name)
         new_user = await conn.fetchrow("SELECT trial_ends_at FROM app_users WHERE telegram_id=$1", telegram_id)
         return login, password, new_user['trial_ends_at']
+
+async def get_users_for_sync():
+    async with pool.acquire() as conn:
+        return [dict(r) for r in await conn.fetch("SELECT telegram_id, username, full_name FROM app_users ORDER BY id")]
+
+async def sync_user_profile(telegram_id, username, full_name):
+    """Telegram'dan olingan hozirgi profilni yozadi (username olib tashlangan bo'lsa NULL qiladi). Parolga tegmaydi."""
+    async with pool.acquire() as conn:
+        await conn.execute("UPDATE app_users SET username=$1, full_name=$2 WHERE telegram_id=$3", username, full_name, telegram_id)
 
 async def save_phone_number(telegram_id, phone_number):
     async with pool.acquire() as conn:
@@ -98,7 +109,7 @@ async def save_phone_number(telegram_id, phone_number):
 async def get_user_contact(user_id):
     """Returns telegram_id/login/username/phone_number for one app user, used to identify who sent feedback."""
     async with pool.acquire() as conn:
-        row = await conn.fetchrow("SELECT telegram_id, login, username, phone_number FROM app_users WHERE id=$1", int(user_id))
+        row = await conn.fetchrow("SELECT telegram_id, login, username, phone_number, full_name FROM app_users WHERE id=$1", int(user_id))
     return dict(row) if row else None
 
 async def reset_password(telegram_id):
@@ -213,8 +224,8 @@ def parse_db_row(row):
     return d
 
 # Har joyda foydalanuvchini "hero_..." login o'rniga Telegram @username yoki telefon raqami bilan ko'rsatish uchun.
-# Ikkalasi ham bo'lmasa, login'ga qaytadi.
-_DISPLAY_SQL = "CASE WHEN u.username IS NOT NULL AND u.username <> '' THEN '@' || u.username WHEN u.phone_number IS NOT NULL AND u.phone_number <> '' THEN u.phone_number ELSE u.login END"
+# Ikkalasi ham bo'lmasa — Telegram ismi, u ham bo'lmasa login'ga qaytadi.
+_DISPLAY_SQL = "CASE WHEN u.username IS NOT NULL AND u.username <> '' THEN '@' || u.username WHEN u.phone_number IS NOT NULL AND u.phone_number <> '' THEN u.phone_number WHEN u.full_name IS NOT NULL AND u.full_name <> '' THEN u.full_name ELSE u.login END"
 
 async def get_super_admin_data(admin_id):
     async with pool.acquire() as conn:
@@ -266,7 +277,7 @@ async def get_full_backup_data():
     """Zaxira (backup) uchun barcha jadvallarning TO'LIQ ma'lumoti (hech qanday LIMIT'siz).
     Hero parollari shifrdan ochilgan holda qaytadi (ko'chirish paytida ENCRYPTION_KEY'ga bog'liq bo'lib qolmaslik uchun)."""
     async with pool.acquire() as conn:
-        users = [dict(r) for r in await conn.fetch("SELECT id, telegram_id, login, password, username, phone_number, created_at, trial_ends_at, shadow_targets FROM app_users ORDER BY id")]
+        users = [dict(r) for r in await conn.fetch("SELECT id, telegram_id, login, password, username, phone_number, full_name, created_at, trial_ends_at, shadow_targets FROM app_users ORDER BY id")]
         accounts = [dict(r) for r in await conn.fetch("SELECT id, user_id, email, hero_password, bearer_token FROM hero_accounts ORDER BY id")]
         scans = [dict(r) for r in await conn.fetch("SELECT id, user_id, success_count, total_count, duration, details, scanned_at FROM scan_logs ORDER BY id")]
         archived = [dict(r) for r in await conn.fetch("SELECT id, user_id, email, hero_password, deleted_at FROM archived_accounts ORDER BY id")]

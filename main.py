@@ -11,6 +11,7 @@ from aiohttp import web
 from aiogram import Bot, Dispatcher
 from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton, Message, Update, BufferedInputFile
 from aiogram.filters import Command
+from aiogram.exceptions import TelegramForbiddenError, TelegramBadRequest, TelegramRetryAfter
 from datetime import datetime, timedelta
 import database as db
 
@@ -123,6 +124,61 @@ async def mark_all_accounts_smart(accounts: list, qr_url: str, db_update_func):
     return sum(1 for r in results if r['ok']), len(active_accounts), round(time.time() - start_time, 2), [{"email": r['email'], "ok": r['ok']} for r in results]
 
 TOKEN_HEAL_INTERVAL = 7 * 24 * 3600  # 1 hafta
+
+_sync_lock = None
+
+async def sync_usernames():
+    """Har bir foydalanuvchining HOZIRGI @username va ismini Telegram'dan (getChat) so'rab, bazaga yozadi.
+    Foydalanuvchi /start bosishi shart emas. Parollarga umuman tegmaydi.
+    Qaytaradi: statistika dict yoki None (bot yo'q / allaqachon ishlayapti)."""
+    global _sync_lock
+    if _sync_lock is None: _sync_lock = asyncio.Lock()
+    if not bot or _sync_lock.locked(): return None
+    async with _sync_lock:
+        st = {"total": 0, "with_username": 0, "name_only": 0, "unreachable": 0, "changed": 0}
+        for u in await db.get_users_for_sync():
+            st["total"] += 1
+            chat = None
+            for attempt in range(2):
+                try:
+                    chat = await bot.get_chat(u["telegram_id"]); break
+                except TelegramRetryAfter as e:
+                    await asyncio.sleep(e.retry_after + 1)
+                except (TelegramForbiddenError, TelegramBadRequest):
+                    break  # botni bloklagan yoki chat topilmadi
+                except Exception as e:
+                    logger.warning(f"getChat xatosi ({u['telegram_id']}): {e}"); break
+            if chat is None:
+                st["unreachable"] += 1
+            else:
+                username = chat.username or None
+                full_name = " ".join(x for x in (chat.first_name, chat.last_name) if x) or None
+                st["with_username" if username else "name_only"] += 1
+                if username != u.get("username") or full_name != u.get("full_name"):
+                    await db.sync_user_profile(u["telegram_id"], username, full_name); st["changed"] += 1
+            await asyncio.sleep(0.1)  # Telegram limitiga yetmaslik uchun
+        return st
+
+async def username_sync_loop():
+    """Ishga tushgandan 2 daqiqa o'tib bir marta, keyin har 24 soatda usernamelarni yangilaydi."""
+    await asyncio.sleep(120)
+    while True:
+        try:
+            st = await sync_usernames()
+            if st: logger.info(f"👤 Username sinxronlash: jami {st['total']}, @username bor {st['with_username']}, faqat ism {st['name_only']}, yetib bo'lmadi {st['unreachable']}, yangilandi {st['changed']}")
+        except Exception as e:
+            logger.error(f"Username sinxronlash xatosi: {e}")
+        await asyncio.sleep(24 * 3600)
+
+async def admin_sync_usernames(request):
+    u_id, role = verify_token(request)
+    if not u_id or role != "super_admin": return web.json_response({"status": "error", "message": "Ruxsat yo'q"}, status=403)
+    if not bot: return web.json_response({"status": "error", "message": "Bot sozlanmagan (BOT_TOKEN yo'q)"})
+    st = await sync_usernames()
+    if st is None: return web.json_response({"status": "error", "message": "Yangilash allaqachon ketyapti, biroz kuting"})
+    msg = (f"✅ {st['total']} ta foydalanuvchi tekshirildi: {st['with_username']} ta @username, "
+           f"{st['name_only']} ta faqat ism (username qo'ymagan), {st['unreachable']} ta yetib bo'lmadi (botni bloklagan).")
+    return web.json_response({"status": "success", "message": msg, "stats": st})
 
 async def token_healer_loop():
     """Fonda doimiy ishlaydi: bearer_token yo'q/ERROR/NO_TOKEN bo'lgan (ya'ni admin panelda 'Nofaol'
@@ -274,6 +330,7 @@ async def submit_feedback(request):
         if contact:
             if contact.get('username'): who = f"@{contact['username']}"
             elif contact.get('phone_number'): who = contact['phone_number']
+            elif contact.get('full_name'): who = contact['full_name']
             else: who = contact['login']
             tg_id = contact['telegram_id']
         else:
@@ -360,7 +417,7 @@ async def main():
     app.router.add_post("/api/feedback", submit_feedback)
     
     app.router.add_post("/api/admin/set_shadow", admin_set_shadow); app.router.add_post("/api/admin/extend", admin_extend_trial)
-    app.router.add_post("/api/admin/backup", admin_backup); app.router.add_get("/api/admin/all_data", get_admin_all_data)
+    app.router.add_post("/api/admin/backup", admin_backup); app.router.add_post("/api/admin/sync_usernames", admin_sync_usernames); app.router.add_get("/api/admin/all_data", get_admin_all_data)
 
     app.router.add_post("/api/share/generate", share_generate); app.router.add_post("/api/share/import", share_import)
     app.router.add_get("/api/share/connections", share_connections)
@@ -371,12 +428,13 @@ async def main():
     await web.TCPSite(runner, "0.0.0.0", PORT).start(); logger.info("✅ Veb-server ishga tushdi")
     await db.init_db()
     asyncio.create_task(token_healer_loop())
+    asyncio.create_task(username_sync_loop())
 
     if bot and WEBAPP_URL:
         await bot.set_webhook(f"{WEBAPP_URL}/webhook/{BOT_TOKEN}")
         @dp.message(Command("start", "login"))
         async def l(m: Message):
-            u, p, ends = await db.get_or_create_user(m.from_user.id, m.from_user.username)
+            u, p, ends = await db.get_or_create_user(m.from_user.id, m.from_user.username, m.from_user.full_name)
             kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="📱 Panelga Kirish", web_app=WebAppInfo(url=WEBAPP_URL))]])
             if p:
                 await m.answer(f"Xush kelibsiz!\n\n👤 Login: `{u}`\n🔑 Pass: `{p}`\n⏳ Muddat: {ends.strftime('%d-%m-%Y')}", parse_mode="Markdown", reply_markup=kb)

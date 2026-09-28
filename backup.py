@@ -34,13 +34,15 @@ def is_active_token(tok):
 
 
 def owner_label(user, fallback_id=None):
-    """@username -> telefon -> login (admin panelidagi bilan bir xil tartib)."""
+    """@username -> telefon -> ism -> login (admin panelidagi bilan bir xil tartib)."""
     if not user:
         return f"O'chirilgan foydalanuvchi (ID {fallback_id})" if fallback_id is not None else "—"
     if user.get("username"):
         return "@" + user["username"]
     if user.get("phone_number"):
         return user["phone_number"]
+    if user.get("full_name"):
+        return user["full_name"]
     return user.get("login") or f"ID {user.get('id')}"
 
 

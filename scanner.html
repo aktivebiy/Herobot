@@ -206,7 +206,8 @@
     <div class="acard"><h3>Aktiv</h3><p id="admActive">0</p></div>
   </div>
   
-  <button id="backupBtn" class="btn btn-secondary" onclick="exportAdminBackup()" style="margin-bottom:20px;">💾 To'liq Zaxira (Excel + JSON)</button>
+  <button id="backupBtn" class="btn btn-secondary" onclick="exportAdminBackup()" style="margin-bottom:10px;">💾 To'liq Zaxira (Excel + JSON)</button>
+  <button id="syncBtn" class="btn btn-secondary" onclick="syncUsernames()" style="margin-bottom:20px;">🔄 Username'larni Telegramdan yangilash</button>
 
   <div class="tab-row">
     <button class="tab-btn active-tab" onclick="showAdminSection('secUsers', this)">👥 Userlar</button>
@@ -402,6 +403,19 @@
   }
 
   /* Admin */
+  async function syncUsernames() {
+    // Server har bir foydalanuvchining hozirgi @username/ismini Telegram'dan o'zi so'rab oladi (/start shart emas).
+    const btn = document.getElementById('syncBtn');
+    const label = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Telegramdan olinmoqda...'; }
+    try {
+      const res = await (await fetch('/api/admin/sync_usernames', { method: 'POST', headers: getHeaders() })).json();
+      showNotify(res.message || (res.status === 'success' ? "Yangilandi" : "Xatolik"), res.status === 'success');
+      if (res.status === 'success') loadAdminData();
+    } catch (e) { showNotify("Xatolik", false); }
+    finally { if (btn) { btn.disabled = false; btn.textContent = label; } }
+  }
+
   async function exportAdminBackup() {
     // Telegram Mini App ichida brauzer-yuklash (blob) ishlamaydi, shuning uchun server fayllarni
     // bot orqali Telegram chatingizga yuboradi — u yerdan bosib yuklab olasiz.
@@ -452,8 +466,8 @@
       </tr>`;
     }).join('');
     document.getElementById('adminPassList').innerHTML = d.accounts.map(a => `<tr><td>${esc(a.tg_login)}</td><td>${esc(a.email)}</td><td style="color:var(--green)">${esc(a.hero_password)}</td></tr>`).join('');
-    document.getElementById('adminLogsList').innerHTML = d.logs.map(l => `<tr><td>${esc(l.login)}</td><td>${l.success_count}/${l.total_count}</td><td>${fmtDateTime(l.scanned_at)}</td></tr>`).join('');
-    document.getElementById('adminArchList').innerHTML = d.archived.map(ar => `<tr><td>${esc(ar.tg_login)}</td><td>${esc(ar.email)}</td><td>${esc(ar.hero_password)}</td><td>${fmtDateTime(ar.deleted_at)}</td></tr>`).join('');
+    document.getElementById('adminLogsList').innerHTML = d.logs.map(l => `<tr><td>${esc(l.login)}</td><td>${l.success_count}/${l.total_count}</td><td style="white-space:nowrap">${fmtDate(l.scanned_at)}<br><span style="opacity:.7">${fmtTime(l.scanned_at)}</span></td></tr>`).join('');
+    document.getElementById('adminArchList').innerHTML = d.archived.map(ar => `<tr><td>${esc(ar.tg_login)}</td><td>${esc(ar.email)}</td><td>${esc(ar.hero_password)}</td><td style="white-space:nowrap">${fmtDate(ar.deleted_at)}<br><span style="opacity:.7">${fmtTime(ar.deleted_at)}</span></td></tr>`).join('');
   }
 
   init();
