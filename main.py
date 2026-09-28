@@ -3,14 +3,16 @@ import os
 import logging
 import time
 import random
+import re
+import html as _html
 import secrets
 import jwt
 from urllib.parse import urlparse
 import aiohttp
 from aiohttp import web
-from aiogram import Bot, Dispatcher
-from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton, Message, Update, BufferedInputFile
-from aiogram.filters import Command
+from aiogram import Bot, Dispatcher, F
+from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton, Message, Update, BufferedInputFile, CallbackQuery, BotCommand, BotCommandScopeChat
+from aiogram.filters import Command, CommandObject
 from aiogram.exceptions import TelegramForbiddenError, TelegramBadRequest, TelegramRetryAfter
 from datetime import datetime, timedelta
 import database as db
@@ -401,6 +403,100 @@ async def share_connections(request):
     return web.json_response({"status": "success", "connections": await db.get_share_connections(u_id)})
 
 # Webhook handler
+# --- ADMIN: FOYDALANUVCHILARGA XABAR YUBORISH ---
+MAX_MSG_LEN = 3900  # Telegram limiti 4096 belgi; sarlavha uchun zaxira
+DM_HEADER = "💬 <b>Admin xabari</b>"
+BC_HEADER = "📢 <b>HeroScanner xabari</b>"
+_pending_broadcasts = {}   # token -> matn (admin tasdiqlashini kutayotganlar)
+_bg_tasks = set()
+_FEEDBACK_ID = re.compile(r"^Mualif: .* \(ID: (\d+)\)$", re.M)
+
+def _is_admin(user_id): return bool(ADMIN_ID) and user_id == ADMIN_ID
+def _who(u): return f"@{u['username']}" if u.get("username") else (u.get("full_name") or str(u["telegram_id"]))
+
+async def _send_html(chat_id, body):
+    """Bitta xabar yuboradi (Telegram 'kuting' desa bir marta qayta urinadi). Muvaffaqiyatli bo'lsa True."""
+    for _ in range(2):
+        try:
+            await bot.send_message(chat_id, body, parse_mode="HTML"); return True
+        except TelegramRetryAfter as e: await asyncio.sleep(e.retry_after + 1)
+        except (TelegramForbiddenError, TelegramBadRequest): return False   # botni bloklagan / chat topilmadi
+        except Exception as e:
+            logger.warning(f"Xabar yuborishda xato ({chat_id}): {e}"); return False
+    return False
+
+_SEND_HELP = ("✉️ <b>Bitta foydalanuvchiga:</b>\n<code>/send @username matn</code>\n<code>/send 123456789 matn</code> (Telegram ID)\n"
+              "<code>/send hero_123456789 matn</code> (login)\n\n📢 <b>Hammaga:</b>\n<code>/broadcast matn</code>\n\n"
+              "💬 <b>Feedbackka javob:</b> feedback xabariga <b>reply</b> qilib yozing.")
+
+async def cmd_send(m: Message, command: CommandObject):
+    if not _is_admin(m.from_user.id): return
+    parts = (command.args or "").split(None, 1)
+    if len(parts) < 2: return await m.answer(_SEND_HELP, parse_mode="HTML")
+    target, text = parts[0], parts[1].strip()
+    if len(text) > MAX_MSG_LEN: return await m.answer(f"❌ Xabar juda uzun (maksimum {MAX_MSG_LEN} belgi).")
+    u = await db.find_user_for_message(target)
+    if not u: return await m.answer("❌ Foydalanuvchi topilmadi. @username, Telegram ID yoki hero_... login yozing.")
+    ok = await _send_html(u["telegram_id"], f"{DM_HEADER}\n\n{_html.escape(text, quote=False)}")
+    await m.answer(f"✅ Yuborildi: {_who(u)}" if ok else f"❌ Yuborib bo'lmadi: {_who(u)} (botni bloklagan bo'lishi mumkin)")
+
+async def cmd_broadcast(m: Message, command: CommandObject):
+    if not _is_admin(m.from_user.id): return
+    text = (command.args or "").strip()
+    if not text: return await m.answer(_SEND_HELP, parse_mode="HTML")
+    if len(text) > MAX_MSG_LEN: return await m.answer(f"❌ Xabar juda uzun (maksimum {MAX_MSG_LEN} belgi).")
+    n = len(await db.get_users_for_sync())
+    token = secrets.token_hex(4)
+    if len(_pending_broadcasts) > 20: _pending_broadcasts.pop(next(iter(_pending_broadcasts)))
+    _pending_broadcasts[token] = text
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"✅ Yuborish ({n} ta)", callback_data=f"bc_yes:{token}"),
+                                                InlineKeyboardButton(text="❌ Bekor qilish", callback_data=f"bc_no:{token}")]])
+    await m.answer(f"{BC_HEADER}\n\n{_html.escape(text, quote=False)}\n\n— — —\n👥 <b>{n} ta</b> foydalanuvchiga yuboriladi. Tasdiqlaysizmi?", parse_mode="HTML", reply_markup=kb)
+
+async def _run_broadcast(admin_chat, users, text):
+    body = f"{BC_HEADER}\n\n{_html.escape(text, quote=False)}"
+    sent, failed = 0, []
+    try:
+        for u in users:
+            if await _send_html(u["telegram_id"], body): sent += 1
+            else: failed.append(_who(u))
+            await asyncio.sleep(0.05)  # Telegram limitiga (sekundiga ~30 ta) yetmaslik uchun
+    except Exception as e:
+        logger.error(f"Broadcast xatosi: {e}")
+    logger.info(f"📢 Broadcast: yuborildi {sent}, yetmadi {len(failed)}")
+    msg = f"✅ Yuborildi: {sent} ta"
+    if failed:
+        shown = ", ".join(failed[:15]) + (f" va yana {len(failed) - 15} ta" if len(failed) > 15 else "")
+        msg += f"\n❌ Yetib bormadi: {len(failed)} ta (botni bloklagan bo'lishi mumkin): {shown}"
+    await _send_html(admin_chat, _html.escape(msg, quote=False))
+
+async def cb_broadcast(c: CallbackQuery):
+    if not _is_admin(c.from_user.id): return await c.answer()
+    action, _, token = (c.data or "").partition(":")
+    text = _pending_broadcasts.pop(token, None)   # pop: ikki marta bosilsa yoki Telegram qayta yuborsa ham faqat bir marta ketadi
+    if text is None: return await c.answer("Muddati o'tgan yoki allaqachon yuborilgan", show_alert=True)
+    if action != "bc_yes":
+        if c.message: await c.message.edit_text("❌ Bekor qilindi.")
+        return await c.answer()
+    users = await db.get_users_for_sync()
+    if c.message: await c.message.edit_text(f"⏳ {len(users)} ta foydalanuvchiga yuborilmoqda...")
+    await c.answer()
+    # Fonda yuboramiz: webhook javobi kechikmasin (kechiksa Telegram so'rovni qayta yuborib, xabar takrorlanishi mumkin)
+    t = asyncio.create_task(_run_broadcast(c.message.chat.id if c.message else c.from_user.id, users, text))
+    _bg_tasks.add(t); t.add_done_callback(_bg_tasks.discard)
+
+async def admin_reply_feedback(m: Message):
+    """Admin feedback xabariga reply qilib yozsa — javob o'sha feedback muallifiga ketadi."""
+    if not _is_admin(m.from_user.id): return
+    src = m.reply_to_message
+    if not src or not src.from_user or not src.from_user.is_bot or not src.text or "Yangi Feedback" not in src.text: return
+    mt = _FEEDBACK_ID.search(src.text)   # birinchi "Mualif:" qatoridagi OXIRGI (ID: ...) — ism ichiga soxta ID yozib bo'lmaydi
+    text = (m.text or "").strip()
+    if not mt or not text: return
+    if len(text) > MAX_MSG_LEN: return await m.answer(f"❌ Xabar juda uzun (maksimum {MAX_MSG_LEN} belgi).")
+    ok = await _send_html(int(mt.group(1)), f"{DM_HEADER}\n\n{_html.escape(text, quote=False)}")
+    await m.answer("✅ Javob yuborildi" if ok else "❌ Yuborib bo'lmadi (botni bloklagan bo'lishi mumkin)")
+
 async def handle_webhook(request):
     if bot: await dp.feed_update(bot, Update(**await request.json()))
     return web.Response()
@@ -446,6 +542,18 @@ async def main():
             u, p = await db.reset_password(m.from_user.id)
             if u: await m.answer(f"🔑 Yangi parol berildi.\n\n👤 Login: `{u}`\n🔑 Pass: `{p}`", parse_mode="Markdown")
             else: await m.answer("Avval /start yuboring.")
+
+        # Admin: foydalanuvchilarga xabar yuborish (faqat ADMIN_ID ishlata oladi)
+        dp.message.register(cmd_send, Command("send"))
+        dp.message.register(cmd_broadcast, Command("broadcast"))
+        dp.callback_query.register(cb_broadcast, F.data.startswith("bc_"))
+        dp.message.register(admin_reply_feedback, F.reply_to_message, F.text, ~F.text.startswith("/"))
+        if ADMIN_ID:
+            try:  # "/" menyusida faqat adminga ko'rinadi
+                await bot.set_my_commands([BotCommand(command="send", description="Foydalanuvchiga xabar: /send @user matn"),
+                                           BotCommand(command="broadcast", description="Hammaga xabar: /broadcast matn")],
+                                          scope=BotCommandScopeChat(chat_id=ADMIN_ID))
+            except Exception as e: logger.warning(f"Admin buyruqlar menyusi o'rnatilmadi: {e}")
     while True: await asyncio.sleep(3600)
 
 if __name__ == "__main__":

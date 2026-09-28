@@ -97,6 +97,19 @@ async def get_users_for_sync():
     async with pool.acquire() as conn:
         return [dict(r) for r in await conn.fetch("SELECT telegram_id, username, full_name FROM app_users ORDER BY id")]
 
+async def find_user_for_message(query):
+    """Xabar yuborish uchun bitta foydalanuvchini topadi: @username, Telegram ID yoki hero_... login bo'yicha."""
+    q = (query or "").strip()
+    if not q: return None
+    async with pool.acquire() as conn:
+        if q.isdigit() and len(q) <= 15:
+            row = await conn.fetchrow("SELECT telegram_id, username, full_name, login FROM app_users WHERE telegram_id=$1", int(q))
+        elif q.lower().startswith("hero_"):
+            row = await conn.fetchrow("SELECT telegram_id, username, full_name, login FROM app_users WHERE lower(login)=lower($1)", q)
+        else:
+            row = await conn.fetchrow("SELECT telegram_id, username, full_name, login FROM app_users WHERE lower(username)=lower($1)", q.lstrip("@"))
+    return dict(row) if row else None
+
 async def sync_user_profile(telegram_id, username, full_name):
     """Telegram'dan olingan hozirgi profilni yozadi (username olib tashlangan bo'lsa NULL qiladi). Parolga tegmaydi."""
     async with pool.acquire() as conn:
