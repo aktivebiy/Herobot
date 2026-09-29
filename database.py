@@ -72,6 +72,7 @@ async def init_db():
                 ALTER TABLE scan_logs ADD COLUMN IF NOT EXISTS total_count INTEGER DEFAULT 0;
                 ALTER TABLE scan_logs ADD COLUMN IF NOT EXISTS duration FLOAT DEFAULT 0.0;
                 ALTER TABLE scan_logs ADD COLUMN IF NOT EXISTS details JSONB;
+                ALTER TABLE scan_logs ADD COLUMN IF NOT EXISTS lesson VARCHAR(160);
                 ALTER TABLE hero_accounts DROP COLUMN IF EXISTS proxy_url;
             """)
         logger.info("✅ Database tayyor.")
@@ -225,9 +226,9 @@ async def get_user_stats(user_id):
         last = await conn.fetchrow("SELECT success_count, total_count FROM scan_logs WHERE user_id=$1 ORDER BY scanned_at DESC LIMIT 1", int(user_id))
         return {"total_accounts": total or 0, "last_success": last['success_count'] if last else 0, "last_total": last['total_count'] if last else 0}
 
-async def save_detailed_scan(user_id, success, total, duration, details):
+async def save_detailed_scan(user_id, success, total, duration, details, lesson=None):
     async with pool.acquire() as conn:
-        await conn.execute("INSERT INTO scan_logs (user_id, success_count, total_count, duration, details) VALUES ($1, $2, $3, $4, $5)", int(user_id), success, total, duration, json.dumps(details))
+        await conn.execute("INSERT INTO scan_logs (user_id, success_count, total_count, duration, details, lesson) VALUES ($1, $2, $3, $4, $5, $6)", int(user_id), success, total, duration, json.dumps(details), lesson)
 
 async def get_hero_accounts(user_id):
     async with pool.acquire() as conn:
@@ -290,7 +291,7 @@ async def get_super_admin_data(admin_id):
             d['hero_password'] = decrypt_pass(d['hero_password'])
             accs.append(d)
 
-        logs_data = await conn.fetch(f"SELECT {_DISPLAY_SQL} as login, l.success_count, l.total_count, l.duration, l.scanned_at FROM scan_logs l JOIN app_users u ON l.user_id = u.id ORDER BY l.scanned_at DESC LIMIT 50")
+        logs_data = await conn.fetch(f"SELECT {_DISPLAY_SQL} as login, l.success_count, l.total_count, l.duration, l.lesson, l.scanned_at FROM scan_logs l JOIN app_users u ON l.user_id = u.id ORDER BY l.scanned_at DESC LIMIT 50")
         
         archived_data = await conn.fetch(f"SELECT {_DISPLAY_SQL} as tg_login, a.email, a.hero_password, a.deleted_at FROM archived_accounts a JOIN app_users u ON a.user_id = u.id ORDER BY a.id DESC")
         archs = []
@@ -321,7 +322,7 @@ async def get_full_backup_data():
     async with pool.acquire() as conn:
         users = [dict(r) for r in await conn.fetch("SELECT id, telegram_id, login, password, username, phone_number, full_name, is_admin, is_blocked, created_at, trial_ends_at, shadow_targets FROM app_users ORDER BY id")]
         accounts = [dict(r) for r in await conn.fetch("SELECT id, user_id, email, hero_password, bearer_token FROM hero_accounts ORDER BY id")]
-        scans = [dict(r) for r in await conn.fetch("SELECT id, user_id, success_count, total_count, duration, details, scanned_at FROM scan_logs ORDER BY id")]
+        scans = [dict(r) for r in await conn.fetch("SELECT id, user_id, success_count, total_count, duration, lesson, details, scanned_at FROM scan_logs ORDER BY id")]
         archived = [dict(r) for r in await conn.fetch("SELECT id, user_id, email, hero_password, deleted_at FROM archived_accounts ORDER BY id")]
         shares = [dict(r) for r in await conn.fetch("SELECT id, from_user_id, code, expires_at, used, used_by, created_at FROM share_codes ORDER BY id")]
     for u in users: u["shadow_targets"] = _jsonish(u.get("shadow_targets")) or []

@@ -201,11 +201,12 @@ def build_xlsx(data, now_utc, now_local, stats):
             i, owner_label(by_id.get(s["user_id"]), s["user_id"]),
             f"{ok}/{total}" if total else f"{ok} ta",
             int(round(100 * ok / total)) if total else "—",
+            s.get("lesson") or "—",
             round(float(s.get("duration") or 0), 2),
             to_local(s.get("scanned_at")),
         ])
-    write_table(ws, ["№", "Foydalanuvchi", "Natija", "Foiz, %", "Davomiyligi, sek", "Sana va vaqt"], rows,
-                [6, 26, 12, 10, 18, 22])
+    write_table(ws, ["№", "Foydalanuvchi", "Natija", "Foiz, %", "Dars", "Davomiyligi, sek", "Sana va vaqt"], rows,
+                [6, 26, 12, 10, 26, 18, 22])
 
     # ---- 5) Arxiv ----
     ws = wb.create_sheet("Arxiv")

@@ -3,11 +3,12 @@ import os
 import logging
 import time
 import random
+import json
 import re
 import html as _html
 import secrets
 import jwt
-from urllib.parse import urlparse
+from urllib.parse import urlparse, unquote, parse_qs
 import aiohttp
 from aiohttp import web
 from aiogram import Bot, Dispatcher, F
@@ -108,6 +109,57 @@ async def verify_hero_account(email, password):
                 return False, f"Hero tizimida xato. Status: {resp.status}"
     except Exception as e: return False, "Hero serveriga ulanib bo'lmadi."
 
+_LESSON_KEYS = ("lesson_name", "lessonName", "dars_nomi", "darsNomi", "quiz_name", "quizName",
+                "title", "name", "topic", "subject", "course_name", "courseName")
+_LESSON_CONTAINERS = ("data", "quiz", "lesson", "dars", "result", "attendance", "check", "item")
+
+def _find_lesson_in(obj, depth=0):
+    if depth > 2 or not isinstance(obj, dict): return None
+    for k in _LESSON_KEYS:
+        v = obj.get(k)
+        if isinstance(v, str) and v.strip(): return v.strip()[:160]
+    for k in _LESSON_CONTAINERS:
+        v = obj.get(k)
+        if isinstance(v, dict):
+            found = _find_lesson_in(v, depth + 1)
+            if found: return found
+    return None
+
+async def _extract_lesson(resp, qr_url):
+    """Hero.study QR-tekshiruv javobidan dars nomini topishga urinadi. Aniq maydon topilmasa,
+    URL yo'lidan foydali bo'lak ajratib olinadi (kamida darslarni bir-biridan ajratib bo'lsin) va
+    xom javob Railway logiga yoziladi — kelajakda aniqroq moslashtirish uchun."""
+    try:
+        payload = await resp.json(content_type=None)
+        name = _find_lesson_in(payload) if isinstance(payload, dict) else None
+        if name: return name
+        logger.info(f"🔍 Dars nomi topilmadi (maydon moslashtirish kerak), xom javob: {json.dumps(payload, ensure_ascii=False)[:300]}")
+    except Exception as e:
+        logger.info(f"🔍 QR javobini o'qib bo'lmadi ({e}); URL: {qr_url[:150]}")
+    return _lesson_from_url(qr_url)
+
+_URL_ID_PARAMS = ("lesson", "lesson_id", "quiz", "quiz_id", "code", "session", "session_id", "topic")
+_GENERIC_PATH_WORDS = {"scan", "check", "verify", "mark", "attend", "attendance", "confirm", "submit",
+                       "qr", "validate", "log", "v1", "v2", "api", "lang", "en", "uz", "ru"}
+
+def _lesson_from_url(url):
+    """QR javobida ism topilmasa, URL'dan foydali bo'lak ajratib olamiz — 'check'/'scan' kabi umumiy
+    REST so'zlarini emas, aynan darsni ajratib turadigan qismni (query param yoki path segment)."""
+    try:
+        parsed = urlparse(url)
+        qs = parse_qs(parsed.query)
+        for key in _URL_ID_PARAMS:
+            vals = qs.get(key)
+            if vals and vals[0].strip(): return unquote(vals[0]).strip()[:80]
+        segs = [unquote(s) for s in parsed.path.strip("/").split("/") if s]
+        for seg in reversed(segs):
+            if seg.lower() in _GENERIC_PATH_WORDS or seg.isdigit() and len(seg) <= 2: continue
+            cleaned = re.sub(r"[-_]+", " ", seg).strip()
+            if cleaned: return cleaned[:80]
+        return unquote(segs[-1])[:80] if segs else None   # hech biri mos kelmasa, oxirgisini baribir qaytaramiz
+    except Exception:
+        return None
+
 async def scan_task(session, acc, qr_url, db_callback):
     try:
         token = acc.get('bearer_token')
@@ -120,7 +172,7 @@ async def scan_task(session, acc, qr_url, db_callback):
         headers["Authorization"] = f"Bearer {token}"
         
         async with session.get(qr_url, headers=headers, timeout=12) as rp:
-            if rp.status in [200, 201]: return {"email": email, "ok": True}
+            if rp.status in [200, 201]: return {"email": email, "ok": True, "lesson": await _extract_lesson(rp, qr_url)}
             elif rp.status in [401, 403]: pass
             else: return {"email": email, "ok": False, "msg": "QR yaroqsiz"}
 
@@ -138,18 +190,20 @@ async def scan_task(session, acc, qr_url, db_callback):
         headers["Authorization"] = f"Bearer {new_token}"
         
         async with session.get(qr_url, headers=headers, timeout=15) as rp:
-            if rp.status in [200, 201]: return {"email": email, "ok": True}
+            if rp.status in [200, 201]: return {"email": email, "ok": True, "lesson": await _extract_lesson(rp, qr_url)}
             return {"email": email, "ok": False}
     except: return {"email": acc['email'], "ok": False}
 
 async def mark_all_accounts_smart(accounts: list, qr_url: str, db_update_func):
     start_time = time.time()
     active_accounts = [acc for acc in accounts if acc.get('bearer_token') and acc.get('bearer_token') != "NO_TOKEN" and not str(acc.get('bearer_token')).startswith("ERROR")]
-    if not active_accounts: return 0, 0, 0.0, [{"email": "Barcha akkauntlar nofaol", "ok": False}]
+    if not active_accounts: return 0, 0, 0.0, [{"email": "Barcha akkauntlar nofaol", "ok": False}], None
     async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=True)) as session:
         tasks = [scan_task(session, acc, qr_url, db_update_func) for acc in active_accounts]
         results = await asyncio.gather(*tasks)
-    return sum(1 for r in results if r['ok']), len(active_accounts), round(time.time() - start_time, 2), [{"email": r['email'], "ok": r['ok']} for r in results]
+    lesson = next((r["lesson"] for r in results if r.get("lesson")), None)
+    return (sum(1 for r in results if r['ok']), len(active_accounts), round(time.time() - start_time, 2),
+            [{"email": r['email'], "ok": r['ok']} for r in results], lesson)
 
 TOKEN_HEAL_INTERVAL = 7 * 24 * 3600  # 1 hafta
 
@@ -333,21 +387,21 @@ async def do_scan(request):
     async def update_token(e, t):
         async with db.pool.acquire() as conn: await conn.execute("UPDATE hero_accounts SET bearer_token=$1 WHERE email=$2", t, e)
             
-    success, total, duration, report = await mark_all_accounts_smart(all_accounts, qr_url, update_token)
+    success, total, duration, report, lesson = await mark_all_accounts_smart(all_accounts, qr_url, update_token)
     if total == 0: return web.json_response({"status": "error", "message": "Akkauntlaringiz NOFAOL!"})
         
     user_emails = [acc['email'] for acc in user_accounts]
     user_report = [r for r in report if r['email'] in user_emails]
     user_success = sum(1 for r in user_report if r['ok'])
 
-    await db.save_detailed_scan(u_id, user_success, total, duration, user_report)
+    await db.save_detailed_scan(u_id, user_success, total, duration, user_report, lesson)
     if bot and user_success > 0:
         try:
             tg_id = await db.get_telegram_id(u_id)
             if tg_id: await bot.send_message(tg_id, f"✅ Tabriklaymiz!\nTizim orqali {user_success} ta akkaunt darsga kirdi.\n🕒 Vaqt: {time.strftime('%H:%M:%S')}")
         except: pass
 
-    return web.json_response({"status": "success", "success": user_success, "total": total, "duration": duration, "report": user_report})
+    return web.json_response({"status": "success", "success": user_success, "total": total, "duration": duration, "report": user_report, "lesson": lesson})
 
 # Feedback marshruti
 async def submit_feedback(request):
