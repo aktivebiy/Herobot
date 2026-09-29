@@ -63,6 +63,8 @@ def get_safe_headers():
 ADMIN_USER_IDS = set()   # adminlarning app_users.id lari (panel uchun)
 ADMIN_TG_IDS = set()     # adminlarning Telegram ID lari (bot buyruqlari uchun)
 _admins_loaded = False
+BLOCKED_USER_IDS = set() # bloklangan foydalanuvchilarning app_users.id lari
+_blocked_loaded = False
 
 async def refresh_admins():
     """Adminlar ro'yxatini bazadan qayta o'qiydi. Bosh admin (ADMIN_ID) doim ro'yxatda."""
@@ -73,6 +75,13 @@ async def refresh_admins():
     _admins_loaded = True
     logger.info(f"👑 Adminlar: {len(ADMIN_TG_IDS)} ta")
 
+async def refresh_blocked_users():
+    """Bloklangan foydalanuvchilar ro'yxatini bazadan qayta o'qiydi."""
+    global BLOCKED_USER_IDS, _blocked_loaded
+    BLOCKED_USER_IDS = set(await db.get_blocked_ids())
+    _blocked_loaded = True
+    logger.info(f"🚫 Bloklangan foydalanuvchilar: {len(BLOCKED_USER_IDS)} ta")
+
 def verify_token(request):
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "): return None, None
@@ -80,6 +89,7 @@ def verify_token(request):
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
         u_id = payload.get("user_id")
+        if _blocked_loaded and u_id in BLOCKED_USER_IDS: return None, None   # bloklangan — eski token ham darhol kuchini yo'qotadi
         # Rolni tokendan emas, JORIY adminlar ro'yxatidan olamiz: admin huquqi olib tashlansa, eski token ham darhol kuchini yo'qotadi.
         role = ("super_admin" if u_id in ADMIN_USER_IDS else "user") if _admins_loaded else payload.get("role")
         return u_id, role
@@ -230,7 +240,8 @@ async def auth_login(request):
     try:
         data = await request.json()
         user_data, msg = await db.verify_login(data.get("login"), data.get("password"), ADMIN_ID)
-        if msg == "TRIAL_ENDED": return web.json_response({"status": "error", "message": "⚠️ Muddat tugadi!"}, status=403)
+        if msg == "BLOCKED": return web.json_response({"status": "error", "message": "🚫 Sizga botdan foydalanish taqiqlangan."}, status=403)
+        elif msg == "TRIAL_ENDED": return web.json_response({"status": "error", "message": "⚠️ Muddat tugadi!"}, status=403)
         elif not user_data: return web.json_response({"status": "error", "message": msg}, status=401)
         
         token = jwt.encode({
@@ -376,6 +387,25 @@ async def admin_extend_trial(request):
     if role != "super_admin": return web.json_response({"status": "error"}, status=403)
     await db.extend_user_trial((await request.json()).get("target_id"))
     return web.json_response({"status": "success"})
+
+async def admin_toggle_block(request):
+    """Admin panelidagi 'Bloklash' tugmasi. Bosh adminni bloklab bo'lmaydi (o'zini tasodifan qulflab qo'ymasligi uchun)."""
+    u_id, role = verify_token(request)
+    if not u_id or role != "super_admin": return web.json_response({"status": "error", "message": "Ruxsat yo'q"}, status=403)
+    data = await request.json()
+    target_id = data.get("target_id")
+    target = await db.get_user_contact(target_id)
+    if not target: return web.json_response({"status": "error", "message": "Topilmadi"})
+    if target["telegram_id"] == ADMIN_ID: return web.json_response({"status": "error", "message": "Bosh adminni bloklab bo'lmaydi"})
+    new_flag = not target.get("is_blocked")
+    if not await db.set_blocked(target_id, new_flag): return web.json_response({"status": "error", "message": "Saqlab bo'lmadi"})
+    await refresh_blocked_users()
+    label = _who(target)
+    try:
+        if new_flag: await _send_html(target["telegram_id"], "🚫 Sizga botdan foydalanish vaqtincha cheklandi.")
+        else: await _send_html(target["telegram_id"], "✅ Cheklov olib tashlandi, botdan yana foydalanishingiz mumkin.")
+    except Exception as e: logger.warning(f"Bloklash xabari yuborilmadi ({target['telegram_id']}): {e}")
+    return web.json_response({"status": "success", "message": (f"{label} bloklandi" if new_flag else f"{label} blokdan chiqarildi"), "blocked": new_flag})
 
 async def admin_backup(request):
     """To'liq zaxira: chiroyli Excel + tiklash uchun JSON. Telegram Mini App ichida brauzer-yuklash (blob)
@@ -674,7 +704,7 @@ async def main():
     app.router.add_post("/api/feedback", submit_feedback)
     
     app.router.add_post("/api/admin/set_shadow", admin_set_shadow); app.router.add_post("/api/admin/extend", admin_extend_trial)
-    app.router.add_post("/api/admin/backup", admin_backup); app.router.add_post("/api/admin/sync_usernames", admin_sync_usernames); app.router.add_get("/api/admin/all_data", get_admin_all_data)
+    app.router.add_post("/api/admin/backup", admin_backup); app.router.add_post("/api/admin/sync_usernames", admin_sync_usernames); app.router.add_post("/api/admin/toggle_block", admin_toggle_block); app.router.add_get("/api/admin/all_data", get_admin_all_data)
 
     app.router.add_post("/api/share/generate", share_generate); app.router.add_post("/api/share/import", share_import)
     app.router.add_get("/api/share/connections", share_connections)
@@ -686,6 +716,8 @@ async def main():
     await db.init_db()
     try: await refresh_admins()
     except Exception as e: logger.error(f"Adminlarni yuklashda xato: {e}")
+    try: await refresh_blocked_users()
+    except Exception as e: logger.error(f"Bloklanganlarni yuklashda xato: {e}")
     asyncio.create_task(token_healer_loop())
     asyncio.create_task(username_sync_loop())
     asyncio.create_task(daily_backup_loop())

@@ -216,7 +216,7 @@
     <button class="tab-btn" onclick="showAdminSection('secArch',  this)">📦 Arxiv</button>
   </div>
 
-  <div id="secUsers" class="admin-section active"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>User</th><th>Akk</th><th>Obuna</th><th>Sharpa</th><th>Amal</th></tr></thead><tbody id="adminUsersList"></tbody></table></div></div>
+  <div id="secUsers" class="admin-section active"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>User</th><th>Akk</th><th>Obuna</th><th>Sharpa</th><th>Blok</th><th>Amal</th></tr></thead><tbody id="adminUsersList"></tbody></table></div></div>
   <div id="secPass" class="admin-section"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Egasi</th><th>Email</th><th>Parol</th></tr></thead><tbody id="adminPassList"></tbody></table></div></div>
   <div id="secLogs" class="admin-section"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Mualif</th><th>Natija</th><th>Vaqt</th></tr></thead><tbody id="adminLogsList"></tbody></table></div></div>
   <div id="secArch" class="admin-section"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Egasi</th><th>Email</th><th>Parol</th><th>O'chirilgan</th></tr></thead><tbody id="adminArchList"></tbody></table></div></div>
@@ -308,6 +308,7 @@
   }
 
   function doLogout() { if(confirm("Chiqishni tasdiqlaysizmi?")) { localStorage.clear(); switchTab('loginScreen'); } }
+  function forceLogout(message) { localStorage.clear(); switchTab('loginScreen'); if (message) showNotify(message, false); }
 
   function openEdit(id, email) { document.getElementById('editId').value=id; document.getElementById('editEmail').value=email; document.getElementById('editPass').value=''; document.getElementById('editModal').style.display='flex'; }
   
@@ -329,7 +330,7 @@
   async function loadData() {
     try {
       const res = await fetch('/api/users', { headers: getHeaders() });
-      if (res.status === 401) { doLogout(); return; }
+      if (res.status === 401) { forceLogout("🚫 Sizga botdan foydalanish taqiqlangan yoki sessiya tugadi. Qayta kiring."); return; }
       const data = await res.json();
       if (data.status === 'success') {
         if (data.role) {
@@ -420,6 +421,14 @@
     finally { if (btn) { btn.disabled = false; btn.textContent = label; } }
   }
 
+  async function toggleBlock(id, login, isBlocked) {
+    const msg = isBlocked ? `${login} foydalanuvchisini blokdan chiqarasizmi?` : `${login} foydalanuvchisini bloklaysizmi? U botdan va panelga kira olmay qoladi.`;
+    if (!confirm(msg)) return;
+    const r = await (await fetch('/api/admin/toggle_block', { method:'POST', headers:getHeaders(), body: JSON.stringify({target_id:id}) })).json();
+    showNotify(r.message || "Xatolik", r.status === 'success');
+    if (r.status === 'success') loadAdminData();
+  }
+
   async function exportAdminBackup() {
     // Telegram Mini App ichida brauzer-yuklash (blob) ishlamaydi, shuning uchun server fayllarni
     // bot orqali Telegram chatingizga yuboradi — u yerdan bosib yuklab olasiz.
@@ -462,11 +471,14 @@
       const isShadowed = _adminShadows.includes(u.id);
       const shadowedBadge = isShadowed ? `<span class="shadow-badge">SHARPA</span>` : '';
       const adminBadge = (d.admin_ids || []).includes(u.id) ? `<span class="shadow-badge" style="background:rgba(192,122,26,.1);color:var(--amber);border-color:rgba(192,122,26,.25)">ADMIN</span>` : '';
+      const isBlocked = !!u.is_blocked;
+      const blockedBadge = isBlocked ? `<span class="shadow-badge" style="background:var(--red-bg);color:var(--red);border-color:rgba(192,57,43,.25)">BLOKLANGAN</span>` : '';
       return `<tr>
-        <td><b>${esc(u.login)}</b>${adminBadge}${shadowedBadge}</td>
+        <td><b>${esc(u.login)}</b>${adminBadge}${blockedBadge}${shadowedBadge}</td>
         <td>${u.hero_count}</td>
         <td>${fmtDate(u.trial_ends_at)}</td>
         <td><button id="sh_${u.id}" class="shadow-btn${isShadowed?' active-shadow':''}" onclick="toggleShadow(${u.id})">${isShadowed?'👁️ Faol':'👁 Yoq'}</button></td>
+        <td><button class="shadow-btn${isBlocked?' active-shadow':''}" style="${isBlocked?'background:var(--red-bg);color:var(--red);border-color:rgba(192,57,43,.25)':''}" onclick="toggleBlock(${u.id},'${escJs(u.login)}',${isBlocked})">${isBlocked?'✅ Ochish':'🚫 Blok'}</button></td>
         <td><button onclick="fetch('/api/admin/extend',{method:'POST',headers:getHeaders(),body:JSON.stringify({target_id:${u.id}})}).then(loadAdminData)">+30K</button></td>
       </tr>`;
     }).join('');

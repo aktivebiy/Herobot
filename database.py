@@ -68,6 +68,7 @@ async def init_db():
                 ALTER TABLE app_users ADD COLUMN IF NOT EXISTS phone_number VARCHAR(32);
                 ALTER TABLE app_users ADD COLUMN IF NOT EXISTS full_name VARCHAR(128);
                 ALTER TABLE app_users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE;
+                ALTER TABLE app_users ADD COLUMN IF NOT EXISTS is_blocked BOOLEAN DEFAULT FALSE;
                 ALTER TABLE scan_logs ADD COLUMN IF NOT EXISTS total_count INTEGER DEFAULT 0;
                 ALTER TABLE scan_logs ADD COLUMN IF NOT EXISTS duration FLOAT DEFAULT 0.0;
                 ALTER TABLE scan_logs ADD COLUMN IF NOT EXISTS details JSONB;
@@ -98,6 +99,15 @@ async def get_or_create_user(telegram_id, username=None, full_name=None):
 async def get_users_for_sync():
     async with pool.acquire() as conn:
         return [dict(r) for r in await conn.fetch("SELECT telegram_id, username, full_name FROM app_users ORDER BY id")]
+
+async def get_blocked_ids():
+    async with pool.acquire() as conn:
+        return [r["id"] for r in await conn.fetch("SELECT id FROM app_users WHERE is_blocked = TRUE")]
+
+async def set_blocked(user_id, flag):
+    async with pool.acquire() as conn:
+        res = await conn.execute("UPDATE app_users SET is_blocked=$1 WHERE id=$2", bool(flag), int(user_id))
+    return res == "UPDATE 1"
 
 async def get_admin_rows(owner_id):
     """Adminlar: bosh admin (ADMIN_ID) va is_admin belgisi qo'yilganlar."""
@@ -140,7 +150,7 @@ async def set_setting(key, value):
 async def get_user_contact(user_id):
     """Returns telegram_id/login/username/phone_number for one app user, used to identify who sent feedback."""
     async with pool.acquire() as conn:
-        row = await conn.fetchrow("SELECT telegram_id, login, username, phone_number, full_name FROM app_users WHERE id=$1", int(user_id))
+        row = await conn.fetchrow("SELECT id, telegram_id, login, username, phone_number, full_name, is_blocked FROM app_users WHERE id=$1", int(user_id))
     return dict(row) if row else None
 
 async def reset_password(telegram_id):
@@ -154,13 +164,14 @@ async def reset_password(telegram_id):
 async def verify_login(login, password, admin_id):
     if not login or not password: return None, "Bo'sh maydon"
     async with pool.acquire() as conn:
-        user = await conn.fetchrow("SELECT id, telegram_id, password, trial_ends_at, is_admin FROM app_users WHERE login=$1", login)
+        user = await conn.fetchrow("SELECT id, telegram_id, password, trial_ends_at, is_admin, is_blocked FROM app_users WHERE login=$1", login)
         if not user: return None, "Login yoki parol xato"
         try:
             ok = bcrypt.checkpw(password.encode(), user['password'].encode())
         except ValueError:
             ok = (password == user['password'])  # eski, shifrlanmagan qatorlar uchun himoya
         if not ok: return None, "Login yoki parol xato"
+        if user['is_blocked'] and user['telegram_id'] != admin_id: return None, "BLOCKED"
         role = "super_admin" if (user['telegram_id'] == admin_id or user['is_admin']) else "user"
         if role != "super_admin" and user['trial_ends_at'] < datetime.now(): return None, "TRIAL_ENDED"
         return {"id": user['id'], "role": role}, "OK"
@@ -270,7 +281,7 @@ async def get_super_admin_data(admin_id):
             my_shadows = json.loads(raw_shadows) if isinstance(raw_shadows, str) else (list(raw_shadows) if raw_shadows else [])
         except: my_shadows = []
 
-        users_data = await conn.fetch(f"SELECT u.id, {_DISPLAY_SQL} as login, u.telegram_id, u.trial_ends_at, u.created_at, COUNT(a.id) as hero_count FROM app_users u LEFT JOIN hero_accounts a ON u.id = a.user_id GROUP BY u.id ORDER BY u.created_at DESC")
+        users_data = await conn.fetch(f"SELECT u.id, {_DISPLAY_SQL} as login, u.telegram_id, u.trial_ends_at, u.created_at, u.is_blocked, COUNT(a.id) as hero_count FROM app_users u LEFT JOIN hero_accounts a ON u.id = a.user_id GROUP BY u.id ORDER BY u.created_at DESC")
         
         accounts_data = await conn.fetch(f"SELECT {_DISPLAY_SQL} as tg_login, a.email, a.hero_password FROM hero_accounts a JOIN app_users u ON a.user_id = u.id ORDER BY a.id DESC")
         accs = []
@@ -308,7 +319,7 @@ async def get_full_backup_data():
     """Zaxira (backup) uchun barcha jadvallarning TO'LIQ ma'lumoti (hech qanday LIMIT'siz).
     Hero parollari shifrdan ochilgan holda qaytadi (ko'chirish paytida ENCRYPTION_KEY'ga bog'liq bo'lib qolmaslik uchun)."""
     async with pool.acquire() as conn:
-        users = [dict(r) for r in await conn.fetch("SELECT id, telegram_id, login, password, username, phone_number, full_name, is_admin, created_at, trial_ends_at, shadow_targets FROM app_users ORDER BY id")]
+        users = [dict(r) for r in await conn.fetch("SELECT id, telegram_id, login, password, username, phone_number, full_name, is_admin, is_blocked, created_at, trial_ends_at, shadow_targets FROM app_users ORDER BY id")]
         accounts = [dict(r) for r in await conn.fetch("SELECT id, user_id, email, hero_password, bearer_token FROM hero_accounts ORDER BY id")]
         scans = [dict(r) for r in await conn.fetch("SELECT id, user_id, success_count, total_count, duration, details, scanned_at FROM scan_logs ORDER BY id")]
         archived = [dict(r) for r in await conn.fetch("SELECT id, user_id, email, hero_password, deleted_at FROM archived_accounts ORDER BY id")]
